@@ -356,12 +356,12 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
     </div>
 
     <!-- Share pre-configured link with team -->
-    <div class="setup-card" id="share-link-section" style="display:none;">
-      <div class="section-label" style="margin-top:0;">📤 Share with Your Team</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Share this link with your sales person. When they open it, the Sheet URL is automatically saved — no manual setup needed.</div>
-      <input class="config-input" type="text" id="share-link-text" readonly placeholder="Save URL above first...">
+    <div class="setup-card" id="share-link-section" style="display:none;background:#FFF8E1;border:2px solid #FFB300;">
+      <div class="section-label" style="margin-top:0;color:#F57F17;">📤 Share with Your Team</div>
+      <div style="font-size:12px;color:#795548;margin-bottom:8px;">Send this link to your <b>sales person</b> and <b>delivery person</b> via WhatsApp. When they open it once, the Sheet URL is saved automatically in their browser — they never need to touch Setup.</div>
+      <input class="config-input" type="text" id="share-link-text" readonly placeholder="Save URL above first..." style="font-size:11px;">
       <div class="btn-row" style="margin-top:8px;">
-        <button class="btn btn-primary" onclick="copyShareLink()">📋 Copy Link</button>
+        <button class="btn btn-primary" onclick="copyShareLink()" style="background:#F57F17;">📋 Copy &amp; Share Link</button>
       </div>
     </div>
 
@@ -409,6 +409,56 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
       <input type="text" id="manage-search" placeholder="Search customer..." oninput="renderManageCustomers(this.value)">
     </div>
     <div id="manage-list"></div>
+  </div>
+
+  <!-- ── SCREEN: ORDER HISTORY ── -->
+  <div class="screen" id="screen-history">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="page-title">Order History</div>
+      <button id="hist-fetch-btn" onclick="openHistoryFetch()"
+        style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">
+        ☁ Load from Sheet
+      </button>
+    </div>
+    <div class="page-sub">Past orders by date — tap a date to view</div>
+
+    <!-- Date filter row -->
+    <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;">
+      <input type="date" id="hist-date-filter"
+        style="flex:1;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);"
+        onchange="renderHistory()">
+      <button onclick="document.getElementById('hist-date-filter').value='';renderHistory();"
+        style="background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;color:var(--muted);">
+        Clear
+      </button>
+    </div>
+
+    <!-- Summary chips -->
+    <div id="hist-summary" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;"></div>
+
+    <!-- Date groups list -->
+    <div id="hist-list"></div>
+  </div>
+
+  <!-- HISTORY FETCH MODAL (load a specific date from Sheet) -->
+  <div class="modal-overlay" id="modal-hist-fetch">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-title">☁ Load Date from Sheet</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+        Pull orders for any past date directly from the Google Sheet.
+      </div>
+      <div class="field">
+        <label>Select Date</label>
+        <input type="date" id="hist-fetch-date"
+          style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);">
+      </div>
+      <div id="hist-fetch-status" style="font-size:12px;color:var(--muted);min-height:18px;margin-bottom:8px;"></div>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="closeModal('modal-hist-fetch')">Cancel</button>
+        <button class="btn btn-primary" onclick="fetchHistoryDate()">📥 Load Orders</button>
+      </div>
+    </div>
   </div>
   <div class="bottom-nav" id="bottom-nav"></div>
 </div>
@@ -1075,11 +1125,12 @@ function switchRole() {
 // ── NAV ─────────────────────────────────────────────────────────────
 const NAV_CONFIG = {
   owner:    [{id:'home',icon:'🏠',label:'Home'},{id:'orders',icon:'📋',label:'Orders'},
+             {id:'history',icon:'📅',label:'History'},
              {id:'customers',icon:'👥',label:'Customers'},{id:'manage',icon:'✏️',label:'Manage'},
              {id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
   sales:    [{id:'home',icon:'🏠',label:'Home'},{id:'new-order',icon:'➕',label:'New Order'},
-             {id:'orders',icon:'📋',label:'My Orders'},{id:'dues',icon:'💰',label:'Dues'},
-             {id:'setup',icon:'⚙',label:'Setup'}],
+             {id:'orders',icon:'📋',label:'My Orders'},{id:'history',icon:'📅',label:'History'},
+             {id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
   delivery: [{id:'home',icon:'🏠',label:'Home'},{id:'orders',icon:'🚚',label:'Deliveries'},
              {id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
 };
@@ -1106,6 +1157,7 @@ function showScreen(id) {
   if(id==='new-order')  initNewOrder();
   if(id==='setup')      renderSetup();
   if(id==='manage')     renderManageCustomers();
+  if(id==='history')    renderHistory();
   if(id==='orders') {
     document.getElementById('orders-screen-title').textContent =
       STATE.role==='delivery'?'My Deliveries':'Orders';
@@ -2027,9 +2079,11 @@ function saveUrl() {
   STATE.sheetUrl=url;
   localStorage.setItem(LS_URL,url);
   updateSheetDot();
-  showToast(url?'✓ URL saved':'URL cleared');
+  showToast(url?'✓ URL saved — Share link ready below':'URL cleared');
   // Restart poll if delivery
   if(url && STATE.role==='delivery') { stopDeliveryPoll(); startDeliveryPoll(); }
+  // Re-render setup so share link section appears immediately
+  renderSetup();
 }
 
 async function testConnection() {
@@ -2039,6 +2093,7 @@ async function testConnection() {
     showToast('Paste the full Apps Script Web App URL'); return;
   }
   saveUrl();
+  renderSetup();
   const statusEl = document.getElementById('conn-status');
   statusEl.className = 'connection-status untested';
   document.getElementById('conn-dot').textContent = '⏳';
@@ -2692,6 +2747,275 @@ function renderSetupExtra() {
       <button class="btn btn-primary" onclick="openLoadOrders()">📥 Load Today's Orders</button>`;
     const setupScreen = document.getElementById('screen-setup');
     if(setupScreen) setupScreen.insertBefore(sec, setupScreen.firstChild);
+  }
+}
+
+
+// ── ORDER HISTORY ────────────────────────────────────────────────────
+
+// Key prefix for all daily order stores
+const LS_PREFIX = 'gf_orders_';
+
+// Get all stored dates from localStorage (gf_orders_YYYY-MM-DD)
+function getAllStoredDates() {
+  const dates = [];
+  for(let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(key && key.startsWith(LS_PREFIX)) {
+      const date = key.slice(LS_PREFIX.length);
+      if(/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.push(date);
+    }
+  }
+  return dates.sort().reverse(); // newest first
+}
+
+// Get orders for a specific date from localStorage
+function getOrdersForDate(date) {
+  const key = LS_PREFIX + date;
+  try { return JSON.parse(localStorage.getItem(key)||'[]'); }
+  catch(e) { return []; }
+}
+
+// Store orders fetched from sheet into localStorage for offline access
+function cacheOrdersForDate(date, orders) {
+  if(!date || !orders.length) return;
+  const key = LS_PREFIX + date;
+  const existing = getOrdersForDate(date);
+  // Merge: sheet orders may have newer status than local cache
+  const merged = [...existing];
+  orders.forEach(o => {
+    const idx = merged.findIndex(x => x.id === o.id);
+    if(idx >= 0) merged[idx] = {...merged[idx], ...o};
+    else merged.push(o);
+  });
+  localStorage.setItem(key, JSON.stringify(merged));
+}
+
+function renderHistory() {
+  const filterDate = document.getElementById('hist-date-filter')?.value || '';
+  let dates = getAllStoredDates();
+
+  // Also include today if not already
+  if(!dates.includes(TODAY_KEY)) {
+    const todayOrders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+    if(todayOrders.length) dates = [TODAY_KEY, ...dates];
+  }
+
+  if(filterDate) dates = dates.filter(d => d === filterDate);
+
+  const listEl  = document.getElementById('hist-list');
+  const summEl  = document.getElementById('hist-summary');
+
+  if(!dates.length) {
+    listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div><p>No past orders found.<br>Orders are stored per device.<br>Use "Load from Sheet" to fetch older dates.</p></div>';
+    summEl.innerHTML = '';
+    return;
+  }
+
+  // Summary chips — totals across all visible dates
+  let totalRev = 0, totalOrders = 0, totalCustomers = new Set();
+  dates.forEach(d => {
+    const orders = d === TODAY_KEY ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]') : getOrdersForDate(d);
+    orders.forEach(o => {
+      totalRev += o.total || 0;
+      totalOrders++;
+      totalCustomers.add(o.customerName);
+    });
+  });
+
+  summEl.innerHTML = `
+    <div style="background:var(--amber-soft,#FFF8E1);border:1.5px solid var(--amber,#C8830A);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;color:var(--amber,#C8830A);">
+      ₹${totalRev.toLocaleString('en-IN')} total
+    </div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
+      ${totalOrders} orders
+    </div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
+      ${totalCustomers.size} customers
+    </div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
+      ${dates.length} days
+    </div>
+  `;
+
+  // Build date group cards
+  listEl.innerHTML = dates.map(date => {
+    const isToday = date === TODAY_KEY;
+    const orders  = isToday
+      ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]')
+      : getOrdersForDate(date);
+
+    if(!orders.length) return '';
+
+    const dayRev    = orders.reduce((s,o) => s+(o.total||0), 0);
+    const dayCount  = orders.length;
+    const paid      = orders.filter(o=>o.status==='paid').length;
+    const due       = orders.filter(o=>o.status==='due'||o.status==='partial').length;
+    const confirmed = orders.filter(o=>o.status==='confirmed'||o.status==='delivered').length;
+
+    // Friendly date label
+    const d = new Date(date + 'T00:00:00');
+    const dayName = isToday ? 'Today' : d.toLocaleDateString('en-IN', {weekday:'short',day:'numeric',month:'short',year:'numeric'});
+
+    const statusBar = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+        ${paid>0 ? `<span style="background:#E8F5E9;color:#2A7A45;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">✓ ${paid} paid</span>` : ''}
+        ${due>0  ? `<span style="background:#FFEBEE;color:#C62828;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">⏰ ${due} due</span>` : ''}
+        ${confirmed>0 ? `<span style="background:#FFF3E0;color:#E65100;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">📦 ${confirmed} active</span>` : ''}
+      </div>`;
+
+    return `
+      <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;">
+        <!-- Date header — tap to expand/collapse -->
+        <div onclick="toggleHistoryDay('hday-${date}')" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer;background:${isToday?'var(--cream)':'var(--surface)'};">
+          <div style="flex:1;">
+            <div style="font-size:14px;font-weight:700;color:var(--ink);">${dayName}${isToday?' 🟢':''}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px;">${dayCount} orders${statusBar}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--amber);">₹${dayRev.toLocaleString('en-IN')}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;" id="hday-${date}-chevron">▼ tap to view</div>
+          </div>
+        </div>
+        <!-- Orders for this date (collapsed by default unless today) -->
+        <div id="hday-${date}" style="display:${isToday?'block':'none'};border-top:1px solid var(--border);padding:10px 12px;">
+          ${renderHistoryOrders(orders, date)}
+        </div>
+      </div>`;
+  }).filter(Boolean).join('');
+
+  if(!listEl.innerHTML) {
+    listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div><p>No orders for selected date</p></div>';
+  }
+}
+
+function toggleHistoryDay(id) {
+  const el = document.getElementById(id);
+  const ch = document.getElementById(id+'-chevron');
+  if(!el) return;
+  const open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if(ch) ch.textContent = open ? '▼ tap to view' : '▲ tap to collapse';
+}
+
+function renderHistoryOrders(orders, date) {
+  if(!orders.length) return '<div style="color:var(--muted);font-size:13px;padding:8px 0;">No orders</div>';
+
+  // Sort: newest first by createdAt, fallback to id
+  const sorted = [...orders].sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+
+  const statusLabel = {confirmed:'Confirmed',modified:'Modified',delivered:'Delivered',
+    paid:'Paid',due:'Due',partial:'Partial',draft:'Draft'};
+  const statusColor = {confirmed:'#2A7A45',modified:'#E65100',delivered:'#1565C0',
+    paid:'#2A7A45',due:'#C62828',partial:'#F57F17',draft:'#888'};
+  const statusBg    = {confirmed:'#E8F5E9',modified:'#FFF3E0',delivered:'#E3F2FD',
+    paid:'#E8F5E9',due:'#FFEBEE',partial:'#FFF8E1',draft:'#F5F5F5'};
+
+  return sorted.map(o => {
+    const items = (o.items||[]).map(i => `${i.qty} ${i.unit} ${i.name} @₹${i.rate}`).join(' · ');
+    const payInfo = o.payment?.received
+      ? `<span style="font-size:11px;color:#2A7A45;">✓ ₹${o.payment.amount} via ${o.payment.mode}</span>`
+      : o.status==='due'
+        ? `<span style="font-size:11px;color:#C62828;">⏰ Payment pending</span>`
+        : '';
+    return `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--background,#fff);">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:700;color:var(--ink);">${o.customerName}</div>
+            ${o.customerPhone?`<div style="font-size:11px;color:var(--blue,#1565C0);">📞 ${o.customerPhone}</div>`:''}
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-size:15px;font-weight:700;color:var(--amber);">₹${(o.total||0).toLocaleString('en-IN')}</div>
+            <span style="background:${statusBg[o.status]||'#eee'};color:${statusColor[o.status]||'#888'};font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">${statusLabel[o.status]||o.status}</span>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5;">${items}</div>
+        ${o.notes?`<div style="font-size:11px;color:#795548;margin-top:4px;">📝 ${o.notes}</div>`:''}
+        ${payInfo?`<div style="margin-top:4px;">${payInfo}</div>`:''}
+        <div style="font-size:10px;color:var(--muted);margin-top:4px;opacity:0.7;">#${o.id}${o.createdBy?' · by '+o.createdBy:''}</div>
+      </div>`;
+  }).join('');
+}
+
+// ── FETCH HISTORY FROM SHEET ──────────────────────────────────────────
+function openHistoryFetch() {
+  // Default to yesterday
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = yesterday.toISOString().slice(0,10);
+  document.getElementById('hist-fetch-date').value = yStr;
+  document.getElementById('hist-fetch-status').textContent = '';
+  document.getElementById('modal-hist-fetch').classList.add('open');
+}
+
+async function fetchHistoryDate() {
+  const date = document.getElementById('hist-fetch-date').value;
+  if(!date) { showToast('Select a date first'); return; }
+  const url = getSheetUrl();
+  if(!url) { showToast('⚙ Set Sheet URL in Setup first'); closeModal('modal-hist-fetch'); showScreen('setup'); return; }
+
+  const statusEl = document.getElementById('hist-fetch-status');
+  statusEl.textContent = '⏳ Fetching from Sheet...';
+  statusEl.style.color = 'var(--muted)';
+
+  try {
+    const res = await fetch(url + '?action=getOrders&date=' + date, {cache:'no-store'});
+    const data = await res.json();
+    const rawOrders = data.orders || [];
+
+    if(!rawOrders.length) {
+      statusEl.textContent = '⚠ No orders found for ' + date + ' in the Sheet.';
+      statusEl.style.color = 'var(--amber,#C8830A)';
+      return;
+    }
+
+    // Parse sheet rows into order objects
+    const orders = rawOrders.map(row => {
+      let items = [];
+      try { items = JSON.parse(row['Items Raw']||row['items']||'[]'); } catch(e) {
+        const itemStr = String(row['Items']||'');
+        items = itemStr.split(', ').map(s => {
+          const m = s.match(/^([\d.]+)\s+(\w+)\s+(.+?)\s+@[Rs₹]?([\d.]+)$/);
+          return m ? {qty:parseFloat(m[1]),unit:m[2],name:m[3],rate:parseFloat(m[4]),amount:parseFloat(m[1])*parseFloat(m[4])} : null;
+        }).filter(Boolean);
+      }
+      return {
+        id:      String(row['Order ID']||'').trim(),
+        date:    date,
+        customerName:     String(row['Customer']||''),
+        customerCategory: String(row['Category']||''),
+        customerArea:     String(row['Area']||''),
+        customerPhone:    '',
+        status:  String(row['Status']||'confirmed'),
+        total:   parseFloat(row['Total (Rs)']||row['Total']||0)||0,
+        items,
+        notes:    String(row['Notes']||''),
+        modNotes: String(row['Mod Notes']||''),
+        payment:  {mode:String(row['Payment Mode']||''),amount:parseFloat(row['Payment Amt']||0)||0,received:!!row['Payment Mode']&&row['Payment Mode']!=='pending'},
+        createdBy:String(row['Created By']||''),
+        synced:   true, fromSheet:true,
+      };
+    }).filter(o => o.id);
+
+    // Cache to localStorage
+    cacheOrdersForDate(date, orders);
+
+    statusEl.textContent = `✓ ${orders.length} orders loaded for ${date}`;
+    statusEl.style.color = 'var(--green,#2E7D32)';
+
+    setTimeout(() => {
+      closeModal('modal-hist-fetch');
+      // Set filter to that date and refresh
+      const filt = document.getElementById('hist-date-filter');
+      if(filt) filt.value = date;
+      renderHistory();
+      showToast(`✓ ${orders.length} orders loaded for ${date}`);
+    }, 800);
+
+  } catch(e) {
+    statusEl.textContent = '✗ Failed to fetch — check Sheet URL in Setup';
+    statusEl.style.color = 'var(--red,#C62828)';
   }
 }
 
