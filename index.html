@@ -1412,7 +1412,7 @@ function orderBodyHTML(o) {
   if((STATE.role==='sales'||STATE.role==='owner') && o.status==='delivered') {
     html += `<button class="btn btn-primary btn-sm" onclick="finaliseOrder('${o.id}')">✓ Finalise</button>`;
   }
-  if((STATE.role==='sales'||STATE.role==='owner') && (o.status==='confirmed'||o.status==='draft')) {
+  if((STATE.role==='sales'||STATE.role==='owner') && (o.status==='confirmed'||o.status==='draft'||o.status==='due')) {
     html += `<button class="btn btn-secondary btn-sm" onclick="openEditOrder('${o.id}')">✏ Edit Order</button>`;
   }
   if(STATE.role==='owner') {
@@ -1721,14 +1721,13 @@ function submitOrder() {
   };
 
   if(isBackdated) {
-    // Save to the correct date's localStorage key, not today's
+    // Save ONLY to the correct past date's localStorage key
+    // Do NOT add to STATE.orders — that would show it in today's orders list
     const bdKey = LS_PREFIX + orderDate;
     const existing = JSON.parse(localStorage.getItem(bdKey)||'[]');
     existing.unshift(order);
     localStorage.setItem(bdKey, JSON.stringify(existing));
-    // Also add to STATE.orders so it appears in today's Orders tab with a badge
-    STATE.orders.unshift(order);
-    saveOrders();
+    // Do NOT call saveOrders() here — that writes to TODAY's key
   } else {
     STATE.orders.unshift(order);
     saveOrders();
@@ -1758,10 +1757,22 @@ function submitOrder() {
     }, 500);
   }
   STATE.cart={}; STATE.selectedCustomer=null;
-  renderDashboard(); showScreen('orders');
+  renderDashboard();
+  if(isBackdated) {
+    // Navigate to History so user can see the back-dated order there
+    showScreen('history');
+    showToast('✓ Back-dated order saved — view it in History');
+  } else {
+    showScreen('orders');
+  }
 }
 
 // ── MODIFY ORDER ─────────────────────────────────────────────────────
+// openEditOrder is called from order cards for sales/owner role
+function openEditOrder(orderId) {
+  openModifyOrder(orderId);
+}
+
 function openModifyOrder(orderId) {
   const order = STATE.orders.find(o=>o.id===orderId);
   if(!order) return;
@@ -3123,6 +3134,92 @@ async function fetchHistoryDate() {
     statusEl.textContent = '✗ Failed to fetch — check Sheet URL in Setup';
     statusEl.style.color = 'var(--red,#C62828)';
   }
+}
+
+
+// ── DELIVERY SEQUENCE ────────────────────────────────────────────────
+const LS_SEQ = 'gf_sequence';
+
+function applySequenceToOrders() {
+  // Reorder STATE.orders according to saved sequence (by order ID)
+  const seq = JSON.parse(localStorage.getItem(LS_SEQ)||'[]');
+  if(!seq.length) return;
+  STATE.orders.sort((a,b) => {
+    const ia = seq.indexOf(a.id);
+    const ib = seq.indexOf(b.id);
+    if(ia === -1 && ib === -1) return 0;
+    if(ia === -1) return 1;
+    if(ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
+function openSequenceScreen() {
+  // Build draggable list of today's confirmed/active orders
+  const orders = STATE.orders.filter(o => o.status==='confirmed'||o.status==='modified'||o.status==='delivered');
+  if(!orders.length) { showToast('No active orders to sequence'); return; }
+  const list = document.getElementById('sequence-list');
+  if(!list) { showToast('Sequence panel not found'); return; }
+  list.innerHTML = orders.map((o,i) => `
+    <div class="seq-row" data-id="${o.id}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--cream);border:1.5px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:grab;user-select:none;">
+      <span style="font-size:18px;color:var(--muted);">☰</span>
+      <div style="flex:1;">
+        <div style="font-weight:700;font-size:14px;">${o.customerName}</div>
+        <div style="font-size:12px;color:var(--muted);">₹${(o.total||0).toLocaleString('en-IN')} · ${o.status}</div>
+      </div>
+      <span style="font-size:13px;font-weight:700;color:var(--amber);">#${i+1}</span>
+    </div>`).join('');
+  // Simple touch-drag reorder
+  enableDragSort(list);
+  document.getElementById('modal-sequence').classList.add('open');
+}
+
+function enableDragSort(list) {
+  let dragging = null;
+  list.querySelectorAll('.seq-row').forEach(row => {
+    row.addEventListener('touchstart', e => { dragging = row; row.style.opacity='0.5'; }, {passive:true});
+    row.addEventListener('touchend', e => {
+      if(dragging) { dragging.style.opacity='1'; dragging=null; updateSeqNumbers(list); }
+    }, {passive:true});
+    row.addEventListener('touchmove', e => {
+      if(!dragging) return;
+      const touch = e.touches[0];
+      const els = list.querySelectorAll('.seq-row');
+      els.forEach(el => {
+        if(el===dragging) return;
+        const rect = el.getBoundingClientRect();
+        if(touch.clientY > rect.top && touch.clientY < rect.bottom) {
+          const mid = rect.top + rect.height/2;
+          if(touch.clientY < mid) list.insertBefore(dragging, el);
+          else list.insertBefore(dragging, el.nextSibling);
+        }
+      });
+    }, {passive:true});
+  });
+}
+
+function updateSeqNumbers(list) {
+  list.querySelectorAll('.seq-row').forEach((row,i) => {
+    const badge = row.querySelector('span:last-child');
+    if(badge) badge.textContent = '#'+(i+1);
+  });
+}
+
+function saveSequence() {
+  const list = document.getElementById('sequence-list');
+  if(!list) return;
+  const ids = [...list.querySelectorAll('.seq-row')].map(r => r.dataset.id);
+  localStorage.setItem(LS_SEQ, JSON.stringify(ids));
+  closeModal('modal-sequence');
+  showToast('✓ Delivery sequence saved');
+  renderOrdersList();
+}
+
+function resetSequence() {
+  localStorage.removeItem(LS_SEQ);
+  closeModal('modal-sequence');
+  showToast('Sequence reset to default');
+  renderOrdersList();
 }
 
 // ── MODAL UTILS ──────────────────────────────────────────────────────
