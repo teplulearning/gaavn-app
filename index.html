@@ -215,8 +215,19 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
 
   <!-- NEW ORDER -->
   <div class="screen" id="screen-new-order">
-    <div class="page-title">New Order</div>
-    <div class="page-sub">Select customer then add products</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="page-title">New Order</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label style="font-size:11px;font-weight:600;color:var(--muted);">DATE</label>
+        <input type="date" id="order-date-picker"
+          style="background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:5px 8px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ink);"
+          onchange="onOrderDateChange(this.value)">
+      </div>
+    </div>
+    <div class="page-sub" id="new-order-sub">Select customer then add products</div>
+    <div id="backdated-banner" style="display:none;background:#FFF3E0;border:1.5px solid #E65100;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;font-weight:600;color:#E65100;">
+      📅 Back-dated order — will be saved under <span id="backdated-date-label"></span>
+    </div>
     <!-- Step 1: Customer -->
     <div id="step-customer">
       <div class="search-box">
@@ -1116,7 +1127,7 @@ function selectRole(role) {
 }
 
 function switchRole() {
-  STATE = {role:null,customers:[],orders:[],cart:{},selectedCustomer:null,
+  STATE = {role:null,customers:[],orders:[],cart:{},selectedCustomer:null,orderDate:TODAY_KEY,
            sheetUrl:STATE.sheetUrl,custFilter:'all'};
   document.getElementById('app').style.display = 'none';
   document.getElementById('role-screen').style.display = 'flex';
@@ -1143,21 +1154,18 @@ function buildNav(role) {
 }
 
 function showScreen(id) {
+  // 1. Hide all screens and deactivate all nav buttons
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+
+  // 2. Activate the target screen and nav button immediately
+  //    so the browser knows what is visible before we render content into it
   const s = document.getElementById('screen-'+id);
   if(s) s.classList.add('active');
   const n = document.getElementById('nav-'+id);
   if(n) n.classList.add('active');
-  if(id==='home')       renderDashboard();
-  if(id==='orders')     renderOrdersList();
-  if(id==='customers')  { renderCustomerList(); document.getElementById('add-cust-btn-wrap').style.display=(STATE.role!=='delivery'?'block':'none'); }
-  if(id==='dues')       renderDues();
-  if(id==='approvals')  renderApprovals();
-  if(id==='new-order')  initNewOrder();
-  if(id==='setup')      renderSetup();
-  if(id==='manage')     renderManageCustomers();
-  if(id==='history')    renderHistory();
+
+  // 3. Set static title/subtitle content synchronously (no render needed)
   if(id==='orders') {
     document.getElementById('orders-screen-title').textContent =
       STATE.role==='delivery'?'My Deliveries':'Orders';
@@ -1166,6 +1174,22 @@ function showScreen(id) {
       ? 'Confirmed orders shown expanded · tap Delivered when done'
       : 'All orders · tap to expand';
   }
+
+  // 4. Render content AFTER the screen is active and visible.
+  //    requestAnimationFrame ensures the browser has painted the
+  //    active screen before we fill it — fixes blank screen on mobile
+  //    when navigating to a screen that was already active.
+  requestAnimationFrame(function() {
+    if(id==='home')       renderDashboard();
+    if(id==='orders')     renderOrdersList();
+    if(id==='customers')  { renderCustomerList(); document.getElementById('add-cust-btn-wrap').style.display=(STATE.role!=='delivery'?'block':'none'); }
+    if(id==='dues')       renderDues();
+    if(id==='approvals')  renderApprovals();
+    if(id==='new-order')  initNewOrder();
+    if(id==='setup')      renderSetup();
+    if(id==='manage')     renderManageCustomers();
+    if(id==='history')    renderHistory();
+  });
 }
 
 // ── INIT ─────────────────────────────────────────────────────────────
@@ -1253,6 +1277,9 @@ function orderCardHTML(o) {
   const syncBadge = o.synced
     ? '<span class="sync-badge sync-ok">✓ Synced</span>'
     : `<span class="sync-badge sync-pending" style="cursor:pointer;" onclick="event.stopPropagation();manualSyncOrder('${o.id}')" title="Tap to sync now">⏳ Tap to Sync</span>`;
+  const bdBadge = (o.backdated && o.date !== TODAY_KEY)
+    ? `<span style="background:#FFF3E0;color:#E65100;font-size:9px;font-weight:700;padding:2px 7px;border-radius:12px;margin-left:4px;">📅 ${new Date(o.date+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</span>`
+    : '';
   // For delivery: always show body expanded, no toggle needed
   const isDelivery = STATE.role === 'delivery';
   const bodyOpen   = isDelivery ? ' open' : '';
@@ -1438,10 +1465,37 @@ function renderApprovals() {
 // ── NEW ORDER ────────────────────────────────────────────────────────
 function initNewOrder() {
   STATE.selectedCustomer = null; STATE.cart = {};
+  STATE.orderDate = TODAY_KEY; // default to today
   document.getElementById('step-customer').style.display = 'block';
   document.getElementById('step-products').style.display = 'none';
   document.getElementById('cust-search').value = '';
   document.getElementById('cust-results').innerHTML = '';
+  // Set date picker to today
+  const dp = document.getElementById('order-date-picker');
+  if(dp) {
+    dp.value = TODAY_KEY;
+    dp.max   = TODAY_KEY; // cannot enter future orders
+  }
+  document.getElementById('backdated-banner').style.display = 'none';
+  document.getElementById('new-order-sub').textContent = 'Select customer then add products';
+}
+
+function onOrderDateChange(val) {
+  if(!val) return;
+  STATE.orderDate = val;
+  const isToday = val === TODAY_KEY;
+  const banner = document.getElementById('backdated-banner');
+  const sub    = document.getElementById('new-order-sub');
+  if(isToday) {
+    banner.style.display = 'none';
+    sub.textContent = 'Select customer then add products';
+  } else {
+    const d = new Date(val + 'T00:00:00');
+    const label = d.toLocaleDateString('en-IN', {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+    document.getElementById('backdated-date-label').textContent = label;
+    banner.style.display = 'block';
+    sub.textContent = 'Back-dated order for ' + label;
+  }
 }
 
 function searchCustomers(q) {
@@ -1605,8 +1659,11 @@ function submitOrder() {
   if(!STATE.selectedCustomer) { showToast('Select a customer first'); return; }
   const total = items.reduce((s,i)=>s+i.amount,0);
   const orderId = 'ORD'+Date.now().toString().slice(-8);
+  // Use the date selected in the picker (defaults to today)
+  const orderDate = STATE.orderDate || TODAY_KEY;
+  const isBackdated = orderDate !== TODAY_KEY;
   const order = {
-    id:orderId, date:TODAY_KEY||new Date().toISOString().slice(0,10),
+    id:orderId, date:orderDate,
     customerId:STATE.selectedCustomer.id,
     customerName:STATE.selectedCustomer.name,
     customerCategory:STATE.selectedCustomer.category||'',
@@ -1617,18 +1674,36 @@ function submitOrder() {
     payment:{mode:'',amount:0,received:false},
     notes:document.getElementById('order-notes').value||'',
     createdAt:Date.now(), synced:false,
+    backdated: isBackdated,
   };
-  STATE.orders.unshift(order);
-  saveOrders();
+
+  if(isBackdated) {
+    // Save to the correct date's localStorage key, not today's
+    const bdKey = LS_PREFIX + orderDate;
+    const existing = JSON.parse(localStorage.getItem(bdKey)||'[]');
+    existing.unshift(order);
+    localStorage.setItem(bdKey, JSON.stringify(existing));
+    // Also add to STATE.orders so it appears in today's Orders tab with a badge
+    STATE.orders.unshift(order);
+    saveOrders();
+  } else {
+    STATE.orders.unshift(order);
+    saveOrders();
+  }
+
   // Auto-sync to sheet if URL is set
   const urlForSync = getSheetUrl();
   if(urlForSync) {
     syncOneOrder(orderId);
-    showToast('✓ Order submitted — syncing to Sheet...');
+    if(isBackdated) {
+      const d = new Date(orderDate+'T00:00:00');
+      const label = d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+      showToast('✓ Back-dated order for '+label+' — syncing...');
+    } else {
+      showToast('✓ Order submitted — syncing to Sheet...');
+    }
   } else {
-    // No URL — warn prominently so the sales person knows
     showToast('✓ Order saved locally — ⚠ Sheet URL not set!', 4000);
-    // Show a one-time banner nudge to setup
     setTimeout(() => {
       const banner = document.createElement('div');
       banner.id = 'setup-nudge';
