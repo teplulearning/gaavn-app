@@ -266,6 +266,7 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
       <div class="page-title" id="orders-screen-title">Orders</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;" id="orders-action-btns">
         <button onclick="copyWhatsApp()" id="btn-wa" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">💬 WA</button>
+        <button onclick="openSequenceScreen()" id="btn-seq" style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">🔢 Sequence</button>
         <button onclick="shareToDelivery()" id="btn-share" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📦 Share</button>
         <button onclick="exportTodayToSheet()" id="btn-sheet" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Sheet</button>
       </div>
@@ -422,6 +423,23 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
     <div id="manage-list"></div>
   </div>
 
+  <!-- ── SEQUENCE MODAL ── -->
+  <div class="modal-overlay" id="modal-sequence">
+    <div class="modal-sheet" style="max-height:92vh;overflow-y:auto;">
+      <div class="modal-handle"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div class="modal-title" style="margin-bottom:0;">🔢 Delivery Sequence</div>
+        <button onclick="closeModal('modal-sequence')" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted);">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">Drag rows to set the delivery order. The WhatsApp summary and deliveries list will follow this sequence.</div>
+      <div id="seq-list" style="touch-action:none;"></div>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn btn-secondary btn-sm" onclick="resetSequence()">↺ Reset</button>
+        <button class="btn btn-primary" onclick="saveSequence()">✓ Save Sequence</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── SCREEN: ORDER HISTORY ── -->
   <div class="screen" id="screen-history">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
@@ -559,6 +577,26 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
 
 
 <!-- SHARE TO DELIVERY MODAL -->
+<div class="modal-overlay" id="modal-edit-order">
+  <div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="modal-title" style="margin-bottom:0;" id="edit-order-title">Edit Order</div>
+      <button onclick="closeModal('modal-edit-order')" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted);">✕</button>
+    </div>
+    <div id="edit-order-customer" style="background:var(--cream);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;font-weight:700;color:var(--ink);"></div>
+    <div id="edit-order-items"></div>
+    <div class="field" style="margin-top:10px;">
+      <label>Notes</label>
+      <input type="text" id="edit-order-notes" placeholder="Delivery note, instructions...">
+    </div>
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="btn btn-secondary" onclick="closeModal('modal-edit-order')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditOrder()">✓ Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-share-delivery">
   <div class="modal-sheet">
     <div class="modal-handle"></div>
@@ -1374,6 +1412,9 @@ function orderBodyHTML(o) {
   if((STATE.role==='sales'||STATE.role==='owner') && o.status==='delivered') {
     html += `<button class="btn btn-primary btn-sm" onclick="finaliseOrder('${o.id}')">✓ Finalise</button>`;
   }
+  if((STATE.role==='sales'||STATE.role==='owner') && (o.status==='confirmed'||o.status==='draft')) {
+    html += `<button class="btn btn-secondary btn-sm" onclick="openEditOrder('${o.id}')">✏ Edit Order</button>`;
+  }
   if(STATE.role==='owner') {
     html += `<button class="btn btn-blue btn-sm" onclick="syncOneOrder('${o.id}')">📤 Sync</button>`;
   }
@@ -1429,6 +1470,8 @@ function filterOrders(f, btn) {
 }
 
 function renderOrdersList() {
+  // Apply saved delivery sequence before rendering
+  applySequenceToOrders();
   let orders = [...STATE.orders];
   // BUG2 FIX: delivery sees ALL order statuses (confirmed, modified, delivered, due, paid)
   // No status filter for delivery in "All" tab — they need to see everything they've done
@@ -2378,43 +2421,31 @@ function copyWhatsApp() {
   lines.push('🕐 Prepared at ' + timeStr);
   lines.push('─'.repeat(30));
 
-  // Group by category
-  const catOrder = ['Distributor -Retail','Distributor -HORECA','HORECA','Retail'];
-  const catEmoji = {'Distributor -Retail':'🏭','Distributor -HORECA':'🏭','HORECA':'🏨','Retail':'🛒'};
-  const byCategory = {};
-  orders.forEach(o => {
-    const cat = o.customerCategory || 'Other';
-    if (!byCategory[cat]) byCategory[cat] = [];
-    byCategory[cat].push(o);
-  });
-
-  // Product totals accumulator
+  // Use STATE.orders directly — already in delivery sequence order
+  // (sequence set via the 🔢 Sequence button)
   const prodTotals = {};
+  const seqSet = getDeliverySequence();
+  const hasSeq = seqSet.length > 0;
+  if (hasSeq) {
+    lines.push('📍 *Delivery sequence order*');
+  }
 
-  const catsPresent = [...catOrder.filter(c => byCategory[c]), ...Object.keys(byCategory).filter(c => !catOrder.includes(c))];
-
-  catsPresent.forEach(cat => {
-    const catOrders = byCategory[cat] || [];
-    if (!catOrders.length) return;
+  orders.forEach((o, idx) => {
+    const statusIcon = {confirmed:'✅',modified:'⚠️',delivered:'✅',paid:'💰',due:'🔴',partial:'🟡',draft:'📝'}[o.status] || '📦';
+    const catEmoji = {'Distributor -Retail':'🏭','Distributor -HORECA':'🏭','HORECA':'🏨','Retail':'🛒'}[o.customerCategory] || '📦';
     lines.push('');
-    lines.push((catEmoji[cat]||'📦') + ' *' + cat.toUpperCase() + '*');
-
-    catOrders.forEach((o, idx) => {
-      const statusIcon = {confirmed:'✅',modified:'⚠️',delivered:'✅',paid:'💰',due:'🔴',partial:'🟡',draft:'📝'}[o.status] || '📦';
-      lines.push('');
-      lines.push((idx+1) + '. ' + statusIcon + ' *' + o.customerName + '*');
-      (o.items || []).forEach(item => {
-        lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
-        // Accumulate product totals
-        if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0};
-        prodTotals[item.name].qty  += item.qty;
-        prodTotals[item.name].amt  += item.amount;
-      });
-      lines.push('   💵 *Total: ₹' + (o.total||0).toLocaleString('en-IN') + '*');
-      if (o.notes) lines.push('   📝 ' + o.notes);
-      if (o.payment?.mode && o.payment.mode !== 'due')
-        lines.push('   💳 Payment: ' + o.payment.mode + (o.payment.amount ? ' ₹'+o.payment.amount : ''));
+    lines.push((idx+1) + '. ' + statusIcon + ' *' + o.customerName + '* ' + catEmoji);
+    if (o.customerArea) lines.push('   📍 ' + o.customerArea);
+    (o.items || []).forEach(item => {
+      lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
+      if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0};
+      prodTotals[item.name].qty  += item.qty;
+      prodTotals[item.name].amt  += item.amount;
     });
+    lines.push('   💵 *Total: ₹' + (o.total||0).toLocaleString('en-IN') + '*');
+    if (o.notes) lines.push('   📝 ' + o.notes);
+    if (o.payment?.mode && o.payment.mode !== 'due')
+      lines.push('   💳 Payment: ' + o.payment.mode + (o.payment.amount ? ' ₹'+o.payment.amount : ''));
   });
 
   // Day summary
