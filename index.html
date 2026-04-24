@@ -145,27 +145,53 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
 .filter-btn.active{background:var(--amber);color:#fff;border-color:var(--amber);}
 /* script code box */
 .code-box{background:#1C1810;color:#A8D8A8;font-family:monospace;font-size:11px;padding:14px;border-radius:10px;white-space:pre-wrap;overflow-x:auto;max-height:300px;overflow-y:auto;line-height:1.5;}
+/* PIN login */
+.pin-dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--amber);background:transparent;transition:background .15s;}
+.pin-dot.filled{background:var(--amber);}
+.pin-key{padding:16px;font-size:20px;font-weight:700;font-family:'DM Sans',sans-serif;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;cursor:pointer;color:var(--ink);transition:background .1s;}
+.pin-key:active{background:var(--amber);color:#fff;}
+.pin-back{font-size:16px;color:var(--muted);}
+.pin-cancel{font-size:14px;color:var(--muted);}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
 </style>
 </head>
 <body>
 
-<!-- ROLE SCREEN -->
+<!-- ROLE / LOGIN SCREEN -->
 <div id="role-screen">
   <div class="role-logo">🐄 Gaavn Fresh</div>
   <div class="role-sub">Sales Order System</div>
-  <div class="role-cards">
-    <div class="role-card" onclick="selectRole('owner')">
-      <div class="role-icon">👑</div>
-      <div class="role-info"><h3>Owner</h3><p>Full access — orders, reports, customers, setup</p></div>
+
+  <!-- Step 1: Role cards (only shows allowed roles) -->
+  <div id="role-cards-wrap" class="role-cards"></div>
+
+  <!-- Step 2: PIN entry (slides in after role tap) -->
+  <div id="pin-panel" style="display:none;width:100%;max-width:340px;margin:0 auto;text-align:center;">
+    <div id="pin-role-label" style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px;"></div>
+    <div id="pin-role-sub"   style="font-size:12px;color:var(--muted);margin-bottom:20px;"></div>
+    <!-- PIN dots display -->
+    <div style="display:flex;justify-content:center;gap:14px;margin-bottom:24px;" id="pin-dots">
+      <div class="pin-dot" id="pd0"></div>
+      <div class="pin-dot" id="pd1"></div>
+      <div class="pin-dot" id="pd2"></div>
+      <div class="pin-dot" id="pd3"></div>
     </div>
-    <div class="role-card" onclick="selectRole('sales')">
-      <div class="role-icon">📋</div>
-      <div class="role-info"><h3>Sales Person</h3><p>Create orders, track pipeline</p></div>
+    <!-- PIN numpad -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:260px;margin:0 auto 16px;">
+      <button class="pin-key" onclick="pinKey('1')">1</button>
+      <button class="pin-key" onclick="pinKey('2')">2</button>
+      <button class="pin-key" onclick="pinKey('3')">3</button>
+      <button class="pin-key" onclick="pinKey('4')">4</button>
+      <button class="pin-key" onclick="pinKey('5')">5</button>
+      <button class="pin-key" onclick="pinKey('6')">6</button>
+      <button class="pin-key" onclick="pinKey('7')">7</button>
+      <button class="pin-key" onclick="pinKey('8')">8</button>
+      <button class="pin-key" onclick="pinKey('9')">9</button>
+      <button class="pin-key pin-back" onclick="pinBack()">⌫</button>
+      <button class="pin-key" onclick="pinKey('0')">0</button>
+      <button class="pin-key pin-cancel" onclick="cancelPin()">✕</button>
     </div>
-    <div class="role-card" onclick="selectRole('delivery')">
-      <div class="role-icon">🚚</div>
-      <div class="role-info"><h3>Delivery Person</h3><p>Update deliveries, collect payments</p></div>
-    </div>
+    <div id="pin-error" style="color:#C62828;font-size:13px;font-weight:600;min-height:20px;"></div>
   </div>
 </div>
 
@@ -702,6 +728,7 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
     <div class="btn-row" style="margin-top:12px;">
       <button class="btn btn-secondary" onclick="closeModal('modal-whatsapp')">Close</button>
       <button class="btn btn-success" onclick="doCopyWA()" id="wa-copy-btn">📋 Copy Message</button>
+      <button class="btn btn-success" onclick="openInWhatsApp()" style="background:#25D366;">📲 Open WhatsApp</button>
     </div>
     <div id="wa-copy-confirm" style="display:none;text-align:center;margin-top:8px;font-size:12px;color:var(--green);font-weight:600;">✓ Copied! Now open WhatsApp and paste.</div>
   </div>
@@ -1149,7 +1176,156 @@ const CAT_BG = {
 };
 
 // ── ROLE SELECTION ──────────────────────────────────────────────────
-function selectRole(role) {
+// ── PIN AUTHENTICATION ────────────────────────────────────────────────
+const LS_PINS = 'gf_pins';
+let _pinRole = null;
+let _pinEntry = '';
+
+function getPins() {
+  return JSON.parse(localStorage.getItem(LS_PINS)||'{}');
+}
+
+function savePins() {
+  const po = document.getElementById('pin-owner')?.value.trim();
+  const ps = document.getElementById('pin-sales')?.value.trim();
+  const pd = document.getElementById('pin-delivery')?.value.trim();
+  // Validate: each must be exactly 4 digits or empty
+  for(const [name, val] of [['Owner', po],['Sales', ps],['Delivery', pd]]) {
+    if(val && !/^[0-9]{4}$/.test(val)) {
+      showToast(name + ' PIN must be exactly 4 digits'); return;
+    }
+  }
+  const pins = {};
+  if(po) pins.owner    = po;
+  if(ps) pins.sales    = ps;
+  if(pd) pins.delivery = pd;
+  localStorage.setItem(LS_PINS, JSON.stringify(pins));
+  const st = document.getElementById('pin-save-status');
+  if(st) { st.style.display='block'; setTimeout(()=>st.style.display='none', 2500); }
+  showToast('✓ PINs saved — users will now need their PIN to log in');
+  // Rebuild the role screen in case visibility changed
+  buildRoleScreen();
+}
+
+function clearPins() {
+  if(!confirm('Remove all PINs? Anyone will be able to tap any role.')) return;
+  localStorage.removeItem(LS_PINS);
+  ['pin-owner','pin-sales','pin-delivery'].forEach(id => {
+    const el = document.getElementById(id); if(el) el.value='';
+  });
+  showToast('✓ All PINs cleared');
+  buildRoleScreen();
+}
+
+// Build the role cards — owner sees all, others see only their card
+function buildRoleScreen() {
+  const pins = getPins();
+  const hasPins = Object.keys(pins).length > 0;
+  const wrap = document.getElementById('role-cards-wrap');
+  if(!wrap) return;
+
+  const roles = [
+    { role:'owner',    icon:'👑', label:'Owner',         sub:'Full access — orders, reports, customers, setup' },
+    { role:'sales',    icon:'📋', label:'Sales Person',   sub:'Create orders, track pipeline' },
+    { role:'delivery', icon:'🚚', label:'Delivery Person', sub:'Update deliveries, collect payments' },
+  ];
+
+  // Determine which cards to show:
+  // - If no PINs set → show all 3 (legacy behaviour)
+  // - If PINs are set:
+  //   • Owner card always shown (owner PIN protects it)
+  //   • Sales card shown only if sales PIN is set (or no PIN for sales but pins exist)
+  //   • Delivery card shown only if delivery PIN is set
+  //   Logic: show a card if that role has a PIN set, OR if no PINs at all
+  const visible = hasPins
+    ? roles.filter(r => r.role==='owner' || pins[r.role])
+    : roles;
+
+  wrap.innerHTML = visible.map(r => `
+    <div class="role-card" onclick="roleCardTapped('${r.role}')">
+      <div class="role-icon">${r.icon}</div>
+      <div class="role-info">
+        <h3>${r.label}</h3>
+        <p>${r.sub}</p>
+        ${pins[r.role] ? '<span style="font-size:10px;color:var(--muted);">🔒 PIN protected</span>' : ''}
+      </div>
+    </div>`).join('');
+}
+
+function roleCardTapped(role) {
+  const pins = getPins();
+  const pin = pins[role];
+  if(!pin) {
+    // No PIN for this role — enter directly
+    enterApp(role);
+    return;
+  }
+  // Show PIN entry panel
+  _pinRole = role;
+  _pinEntry = '';
+  updatePinDots();
+  document.getElementById('pin-error').textContent = '';
+  const roleInfo = {
+    owner:    { label:'👑 Owner',          sub:'Enter your 4-digit PIN' },
+    sales:    { label:'📋 Sales Person',   sub:'Enter your 4-digit PIN' },
+    delivery: { label:'🚚 Delivery Person', sub:'Enter your 4-digit PIN' },
+  };
+  document.getElementById('pin-role-label').textContent = roleInfo[role].label;
+  document.getElementById('pin-role-sub').textContent   = roleInfo[role].sub;
+  document.getElementById('role-cards-wrap').style.display = 'none';
+  document.getElementById('pin-panel').style.display = 'block';
+}
+
+function pinKey(digit) {
+  if(_pinEntry.length >= 4) return;
+  _pinEntry += digit;
+  updatePinDots();
+  if(_pinEntry.length === 4) {
+    // Auto-submit after brief delay so last dot is visible
+    setTimeout(checkPin, 200);
+  }
+}
+
+function pinBack() {
+  _pinEntry = _pinEntry.slice(0, -1);
+  updatePinDots();
+  document.getElementById('pin-error').textContent = '';
+}
+
+function cancelPin() {
+  _pinRole = null; _pinEntry = '';
+  document.getElementById('pin-panel').style.display = 'none';
+  document.getElementById('role-cards-wrap').style.display = 'grid';
+  document.getElementById('pin-error').textContent = '';
+  updatePinDots();
+}
+
+function updatePinDots() {
+  for(let i = 0; i < 4; i++) {
+    const dot = document.getElementById('pd'+i);
+    if(dot) dot.classList.toggle('filled', i < _pinEntry.length);
+  }
+}
+
+function checkPin() {
+  const pins = getPins();
+  const correct = pins[_pinRole];
+  if(_pinEntry === correct) {
+    document.getElementById('pin-panel').style.display = 'none';
+    enterApp(_pinRole);
+  } else {
+    document.getElementById('pin-error').textContent = '✕ Wrong PIN — try again';
+    _pinEntry = '';
+    updatePinDots();
+    // Shake effect
+    const panel = document.getElementById('pin-panel');
+    panel.style.animation = 'none';
+    panel.offsetHeight; // reflow
+    panel.style.animation = 'shake 0.3s ease';
+  }
+}
+
+function enterApp(role) {
   STATE.role = role;
   document.getElementById('role-screen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -1164,12 +1340,21 @@ function selectRole(role) {
   initApp();
 }
 
+// Keep selectRole for backward compat (called by URL params etc.)
+function selectRole(role) { enterApp(role); }
+
 function switchRole() {
   STATE = {role:null,customers:[],orders:[],cart:{},selectedCustomer:null,orderDate:TODAY_KEY,
            sheetUrl:STATE.sheetUrl,custFilter:'all'};
   document.getElementById('app').style.display = 'none';
-  document.getElementById('role-screen').style.display = 'flex';
+  const rs = document.getElementById('role-screen');
+  rs.style.display = 'flex';
+  // Reset to cards view
+  cancelPin();
+  buildRoleScreen();
 }
+
+
 
 // ── NAV ─────────────────────────────────────────────────────────────
 const NAV_CONFIG = {
@@ -1242,6 +1427,11 @@ function initApp() {
   });
   // Load today's orders from localStorage
   STATE.orders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+  // For delivery: also load past dues and delivered orders from previous days
+  // so they can collect outstanding payments and see delivery history
+  if(STATE.role === 'delivery') {
+    loadPastDuesForDelivery();
+  }
   // Load saved sheet URL — check URL params first (allows pre-configuration via link)
   const urlParams = new URLSearchParams(window.location.search);
   const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
@@ -1271,7 +1461,17 @@ function updateSheetDot() {
 
 // ── SAVE ORDERS ──────────────────────────────────────────────────────
 function saveOrders() {
-  localStorage.setItem(LS_ORDERS, JSON.stringify(STATE.orders));
+  // Group orders by date and save each group to its own key
+  // This ensures past dues updated by delivery are saved to the right date
+  const byDate = {};
+  STATE.orders.forEach(o => {
+    const dateKey = (o.date && o.date !== 'undefined') ? o.date : TODAY_KEY;
+    if(!byDate[dateKey]) byDate[dateKey] = [];
+    byDate[dateKey].push(o);
+  });
+  Object.entries(byDate).forEach(([date, orders]) => {
+    localStorage.setItem(LS_PREFIX + date, JSON.stringify(orders));
+  });
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────
@@ -2187,6 +2387,19 @@ function downloadTemplate() {
 function renderSetup() {
   const savedUrl=localStorage.getItem(LS_URL)||'';
   document.getElementById('gs_url').value=savedUrl;
+  // Show PIN management only for owner
+  const pinSection = document.getElementById('pin-mgmt-section');
+  if(pinSection) pinSection.style.display = STATE.role==='owner' ? 'block' : 'none';
+  // Load current PINs into fields (owner only)
+  if(STATE.role==='owner') {
+    const pins = JSON.parse(localStorage.getItem('gf_pins')||'{}');
+    const po = document.getElementById('pin-owner');
+    const ps = document.getElementById('pin-sales');
+    const pd = document.getElementById('pin-delivery');
+    if(po) po.value = pins.owner||'';
+    if(ps) ps.value = pins.sales||'';
+    if(pd) pd.value = pins.delivery||'';
+  }
   document.getElementById('script-code').textContent=getAppsScriptCode();
   // Show share link section if URL is configured
   const shareLinkDiv = document.getElementById('share-link-section');
@@ -2418,6 +2631,12 @@ function getAppsScriptCode() {
 
 
 // ── WHATSAPP ORDER SUMMARY ───────────────────────────────────────────
+function getDeliverySequence() {
+  // Returns saved sequence as array of order IDs (empty if none set)
+  try { return JSON.parse(localStorage.getItem(LS_SEQ)||'[]'); }
+  catch(e) { return []; }
+}
+
 function copyWhatsApp() {
   const orders = STATE.orders;
   if (!orders.length) { showToast('No orders today to share'); return; }
@@ -2518,6 +2737,16 @@ function copyApprovalMsg() {
     try { document.execCommand('copy'); showToast('✓ Copied — paste to WhatsApp'); } catch(e){}
   };
   copy(txt);
+}
+
+function openInWhatsApp() {
+  const txt = document.getElementById('wa-text').value;
+  if(!txt) return;
+  // wa.me with text opens WhatsApp with the message pre-filled
+  // Works on mobile (opens app) and desktop (opens WhatsApp Web)
+  const encoded = encodeURIComponent(txt);
+  const url = 'https://wa.me/?text=' + encoded;
+  window.open(url, '_blank');
 }
 
 function fallbackCopyWA(txt) {
@@ -3222,6 +3451,35 @@ function resetSequence() {
   renderOrdersList();
 }
 
+
+// ── LOAD PAST DUES FOR DELIVERY ──────────────────────────────────────
+// Delivery person needs to see outstanding dues from previous days
+// so they can collect payment during their round.
+function loadPastDuesForDelivery() {
+  const todayIds = new Set(STATE.orders.map(o => o.id));
+  let added = 0;
+  // Scan all stored date keys
+  for(let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(!key || !key.startsWith(LS_PREFIX)) continue;
+    const date = key.slice(LS_PREFIX.length);
+    if(date === TODAY_KEY) continue; // already loaded
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    try {
+      const past = JSON.parse(localStorage.getItem(key)||'[]');
+      past.forEach(o => {
+        // Include: due, partial (need collection), delivered (pending finalisation)
+        if((o.status==='due'||o.status==='partial'||o.status==='delivered') && !todayIds.has(o.id)) {
+          STATE.orders.push(o);
+          todayIds.add(o.id);
+          added++;
+        }
+      });
+    } catch(e) {}
+  }
+  if(added > 0) console.log('Loaded', added, 'past due/delivered orders for delivery');
+}
+
 // ── MODAL UTILS ──────────────────────────────────────────────────────
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 document.addEventListener('click', e => {
@@ -3268,6 +3526,13 @@ async function pollOrdersFromSheet() {
   const url = getSheetUrl();
   if(!url || STATE.role!=='delivery') return;
   try {
+    // Poll today AND the past 3 days to catch any dues/delivered not yet collected
+    const datesToPoll = [TODAY_KEY];
+    for(let i = 1; i <= 3; i++) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      datesToPoll.push(d.toISOString().slice(0,10));
+    }
+    // Use today for the primary fetch; past dates fetched silently
     const res = await fetch(url+'?action=getOrders&date='+TODAY_KEY, {cache:'no-store'});
     const data = await res.json();
     if(!data.orders || !data.orders.length) return;
@@ -3322,6 +3587,8 @@ async function pollOrdersFromSheet() {
     });
     if(added>0 || updated>0) {
       saveOrders();
+      // Reload past dues to catch any that were just synced
+      if(STATE.role==='delivery') loadPastDuesForDelivery();
       renderDashboard();
       renderOrdersList();
       if(added>0) showToast('📥 '+added+' new order'+(added>1?'s':'')+' loaded from Sheet');
