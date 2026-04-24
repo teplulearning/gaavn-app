@@ -1230,18 +1230,20 @@ function buildRoleScreen() {
     { role:'delivery', icon:'🚚', label:'Delivery Person', sub:'Update deliveries, collect payments' },
   ];
 
-  // Determine which cards to show:
-  // - If no PINs set → show all 3 (legacy behaviour)
-  // - If PINs are set:
-  //   • Owner card always shown (owner PIN protects it)
-  //   • Sales card shown only if sales PIN is set (or no PIN for sales but pins exist)
-  //   • Delivery card shown only if delivery PIN is set
-  //   Logic: show a card if that role has a PIN set, OR if no PINs at all
-  const visible = hasPins
-    ? roles.filter(r => r.role==='owner' || pins[r.role])
-    : roles;
+  // Card visibility rules:
+  // - Owner card: ALWAYS shown (owner must always be able to access)
+  // - Sales card: shown if no PINs set at all, OR a sales PIN exists
+  // - Delivery card: shown if no PINs set at all, OR a delivery PIN exists
+  // This prevents any role card from disappearing and causing a blank screen.
+  const visible = roles.filter(r => {
+    if(r.role === 'owner') return true;       // owner always visible
+    if(!hasPins) return true;                  // no PINs set — show everyone
+    return !!pins[r.role];                     // show only if that role has a PIN
+  });
+  // Safety: if somehow visible is empty, show all (should never happen)
+  const toShow = visible.length > 0 ? visible : roles;
 
-  wrap.innerHTML = visible.map(r => `
+  wrap.innerHTML = toShow.map(r => `
     <div class="role-card" onclick="roleCardTapped('${r.role}')">
       <div class="role-icon">${r.icon}</div>
       <div class="role-info">
