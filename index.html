@@ -3616,6 +3616,19 @@ function applyRoleUI() {
   // Start polling for delivery
   if(isDelivery && getSheetUrl()) startDeliveryPoll();
 }
+
+// ── STARTUP ──────────────────────────────────────────────────────────
+// Build the role cards as soon as the DOM is ready.
+// Three methods to ensure it fires on every browser/origin combination:
+function _startApp() {
+  try { buildRoleScreen(); } catch(e) { console.error('buildRoleScreen failed:', e); }
+}
+if(document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _startApp);
+} else {
+  // DOM already parsed (common on GitHub Pages with defer/async)
+  _startApp();
+}
 </script>
 </body>
 </html>
