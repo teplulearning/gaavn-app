@@ -162,8 +162,34 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
   <div class="role-logo">🐄 Gaavn Fresh</div>
   <div class="role-sub">Sales Order System</div>
 
-  <!-- Step 1: Role cards (only shows allowed roles) -->
-  <div id="role-cards-wrap" class="role-cards"></div>
+  <!-- Step 1: Role cards — static HTML, always visible -->
+  <!-- JS will hide cards that don't have a PIN once PINs are configured -->
+  <div id="role-cards-wrap" class="role-cards">
+    <div class="role-card" id="card-owner" onclick="roleCardTapped('owner')">
+      <div class="role-icon">👑</div>
+      <div class="role-info">
+        <h3>Owner</h3>
+        <p>Full access — orders, reports, customers, setup</p>
+        <span id="pin-badge-owner" style="display:none;font-size:10px;color:var(--muted);">🔒 PIN protected</span>
+      </div>
+    </div>
+    <div class="role-card" id="card-sales" onclick="roleCardTapped('sales')">
+      <div class="role-icon">📋</div>
+      <div class="role-info">
+        <h3>Sales Person</h3>
+        <p>Create orders, track pipeline</p>
+        <span id="pin-badge-sales" style="display:none;font-size:10px;color:var(--muted);">🔒 PIN protected</span>
+      </div>
+    </div>
+    <div class="role-card" id="card-delivery" onclick="roleCardTapped('delivery')">
+      <div class="role-icon">🚚</div>
+      <div class="role-info">
+        <h3>Delivery Person</h3>
+        <p>Update deliveries, collect payments</p>
+        <span id="pin-badge-delivery" style="display:none;font-size:10px;color:var(--muted);">🔒 PIN protected</span>
+      </div>
+    </div>
+  </div>
 
   <!-- Step 2: PIN entry (slides in after role tap) -->
   <div id="pin-panel" style="display:none;width:100%;max-width:340px;margin:0 auto;text-align:center;">
@@ -1217,41 +1243,20 @@ function clearPins() {
   buildRoleScreen();
 }
 
-// Build the role cards — owner sees all, others see only their card
+// Update role card visibility based on PIN config
+// Cards are static HTML — we just show/hide them
 function buildRoleScreen() {
   const pins = getPins();
   const hasPins = Object.keys(pins).length > 0;
-  const wrap = document.getElementById('role-cards-wrap');
-  if(!wrap) return;
-
-  const roles = [
-    { role:'owner',    icon:'👑', label:'Owner',         sub:'Full access — orders, reports, customers, setup' },
-    { role:'sales',    icon:'📋', label:'Sales Person',   sub:'Create orders, track pipeline' },
-    { role:'delivery', icon:'🚚', label:'Delivery Person', sub:'Update deliveries, collect payments' },
-  ];
-
-  // Card visibility rules:
-  // - Owner card: ALWAYS shown (owner must always be able to access)
-  // - Sales card: shown if no PINs set at all, OR a sales PIN exists
-  // - Delivery card: shown if no PINs set at all, OR a delivery PIN exists
-  // This prevents any role card from disappearing and causing a blank screen.
-  const visible = roles.filter(r => {
-    if(r.role === 'owner') return true;       // owner always visible
-    if(!hasPins) return true;                  // no PINs set — show everyone
-    return !!pins[r.role];                     // show only if that role has a PIN
+  ['owner','sales','delivery'].forEach(role => {
+    const card  = document.getElementById('card-'+role);
+    const badge = document.getElementById('pin-badge-'+role);
+    if(!card) return;
+    // Owner always visible; others visible if no PINs set OR they have a PIN
+    const show = role==='owner' || !hasPins || !!pins[role];
+    card.style.display = show ? '' : 'none';
+    if(badge) badge.style.display = pins[role] ? 'inline' : 'none';
   });
-  // Safety: if somehow visible is empty, show all (should never happen)
-  const toShow = visible.length > 0 ? visible : roles;
-
-  wrap.innerHTML = toShow.map(r => `
-    <div class="role-card" onclick="roleCardTapped('${r.role}')">
-      <div class="role-icon">${r.icon}</div>
-      <div class="role-info">
-        <h3>${r.label}</h3>
-        <p>${r.sub}</p>
-        ${pins[r.role] ? '<span style="font-size:10px;color:var(--muted);">🔒 PIN protected</span>' : ''}
-      </div>
-    </div>`).join('');
 }
 
 function roleCardTapped(role) {
