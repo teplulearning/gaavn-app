@@ -912,13 +912,14 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
 // ── PRODUCT CATALOGUE ───────────────────────────────────────────────
 const PRODUCTS = [
   {id:'paneer', name:'Paneer',        unit:'kg',   stdRate:260, emoji:'🧀'},
+  {id:'pl',     name:'Paneer Laadi',  unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true},
   {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70},
   {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛'},
   {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙'},
   {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦'},
   {id:'cmk',    name:'CM Khoya',      unit:'kg',   stdRate:234, emoji:'🍫'},
   {id:'stk',    name:'Std Khoya',     unit:'kg',   stdRate:234, emoji:'🍫'},
-  {id:'ch',     name:'Chaach',        unit:'unit', stdRate:28,  emoji:'🧉'},
+  {id:'ch',     name:'Chaas 1 Litre',  unit:'btl',  stdRate:28,  emoji:'🧉'},
   {id:'ch500',  name:'Chaas 500ml',   unit:'btl',  stdRate:30,  emoji:'🍶'},
   {id:'sl',     name:'Sweet Lassi',   unit:'cup',  stdRate:23,  emoji:'🥤'},
   {id:'ml',     name:'Mango Lassi',   unit:'cup',  stdRate:23,  emoji:'🥭'},
@@ -1691,7 +1692,7 @@ function orderCardHTML(o) {
         ${days}
       </div>
       <div style="text-align:right;">
-        <div class="order-amount">₹${(o.total||0).toLocaleString('en-IN')}</div>
+        <div class="order-amount">₹${(o.total||0).toLocaleString('en-IN')}${(o.items||[]).some(it=>it.weightPending)?'<span style="font-size:11px;color:#E65100;"> +⚖️</span>':''}</div>
         <span class="status-pill ${classMap[o.status]||'status-draft'}">${labelMap[o.status]||o.status}</span>
       </div>
     </div>
@@ -1709,32 +1710,87 @@ function orderBodyHTML(o) {
     const orig = origItems?origItems.find(x=>x.product===item.product):null;
     const changed = orig && (orig.qty!==item.qty||orig.rate!==item.rate);
     if(isDelivery) {
-      // Delivery: show full detail with editable qty inline
-      html += `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-          <div style="font-size:14px;font-weight:700;color:var(--ink);">${item.name}</div>
-          <div style="font-size:14px;font-weight:700;color:var(--amber);">₹${(item.amount||0).toLocaleString('en-IN')}</div>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
-          ₹${item.rate} / ${item.unit} &nbsp;·&nbsp; Ordered: <b>${item.qty} ${item.unit}</b>
-          ${changed?`<span style="color:var(--red);font-size:10px;margin-left:4px;">MODIFIED</span>`:''}
-        </div>
-        ${changed?`<div style="font-size:10px;color:var(--muted);text-decoration:line-through;margin-bottom:4px;">Was: ${orig.qty} ${item.unit} × ₹${orig.rate}</div>`:''}
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Delivered:</span>
-          <input type="number" id="dq-${o.id}-${i}" value="${item.qty}" min="0" step="0.5"
-            oninput="refreshDeliveryTotal('${o.id}')"
-            style="width:70px;background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:5px 8px;font-size:14px;font-weight:700;text-align:center;color:var(--ink);">
-          <span style="font-size:12px;color:var(--muted);">${item.unit}</span>
-          <span style="margin-left:auto;font-size:13px;font-weight:600;color:var(--green);" id="da-${o.id}-${i}">₹${(item.amount||0).toLocaleString('en-IN')}</span>
-        </div>
-      </div>`;
+      // ── Paneer Laadi: special delivery UI — enter weight per ladi or total ──
+      if(item.weightPending || item.product==='pl') {
+        const ladiCount = item.qty||1;
+        const existingWeights = item.ladiWeights||[];
+        // Build per-ladi weight inputs — pre-fill with estKg/count as a hint
+        const estPerLadi = (item.estKg && ladiCount>0) ? (item.estKg/ladiCount) : 0;
+        let ladiInputs = '';
+        for(let l=0;l<ladiCount;l++) {
+          const wVal = existingWeights[l] || (estPerLadi>0 ? estPerLadi.toFixed(1) : '');
+          const wNum = parseFloat(wVal)||0;
+          ladiInputs += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <span style="font-size:12px;font-weight:600;color:var(--muted);min-width:54px;">Ladi ${l+1}:</span>
+            <input type="number" id="lw-${o.id}-${i}-${l}" value="${wVal}" min="0" step="0.1" placeholder="kg"
+              oninput="refreshLaadiTotal('${o.id}',${i})"
+              style="width:72px;background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:5px 8px;font-size:14px;font-weight:700;text-align:center;color:var(--ink);">
+            <span style="font-size:12px;color:var(--muted);">kg</span>
+            <span style="margin-left:auto;font-size:12px;font-weight:600;color:var(--green);" id="la-${o.id}-${i}-${l}">
+              ${wNum>0?'₹'+(wNum*item.rate).toLocaleString('en-IN'):'—'}
+            </span>
+          </div>`;
+        }
+        const currentAmt = (item.amount||0);
+        html += `<div style="padding:8px 0;border-bottom:1px solid var(--border);background:#FFFBF0;margin:0 -4px;padding:10px 4px;border-radius:8px;margin-bottom:4px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <div style="font-size:14px;font-weight:700;color:var(--ink);">🧱 ${item.name}</div>
+            <div style="font-size:14px;font-weight:700;color:${currentAmt>0?'var(--amber)':'var(--muted)'};" id="da-${o.id}-${i}">
+              ${currentAmt>0?'₹'+currentAmt.toLocaleString('en-IN'):'⚖️ TBD'}
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+            ₹${item.rate}/kg &nbsp;·&nbsp; <b>${ladiCount} ladi${ladiCount>1?'s':''} ordered</b>
+            ${item.estKg?`<span style="color:var(--muted);"> · est. ~${item.estKg}kg</span>`:''}
+            <span style="background:#FFF3E0;color:#E65100;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;margin-left:6px;">⚖️ Enter actual weight</span>
+          </div>
+          <div id="laadi-inputs-${o.id}-${i}">${ladiInputs}</div>
+          <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px dashed var(--border);margin-top:4px;">
+            <span style="font-size:12px;font-weight:700;color:var(--muted);">Total weight</span>
+            <span style="font-size:13px;font-weight:700;color:var(--green);" id="ltotal-${o.id}-${i}">
+              ${(item.ladiWeights||[]).reduce((s,w)=>s+(parseFloat(w)||0),0)||0} kg
+            </span>
+          </div>
+        </div>`;
+      } else {
+        // Normal delivery item
+        html += `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <div style="font-size:14px;font-weight:700;color:var(--ink);">${item.name}</div>
+            <div style="font-size:14px;font-weight:700;color:var(--amber);">₹${(item.amount||0).toLocaleString('en-IN')}</div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+            ₹${item.rate} / ${item.unit} &nbsp;·&nbsp; Ordered: <b>${item.qty} ${item.unit}</b>
+            ${changed?`<span style="color:var(--red);font-size:10px;margin-left:4px;">MODIFIED</span>`:''}
+          </div>
+          ${changed?`<div style="font-size:10px;color:var(--muted);text-decoration:line-through;margin-bottom:4px;">Was: ${orig.qty} ${item.unit} × ₹${orig.rate}</div>`:''}
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Delivered:</span>
+            <input type="number" id="dq-${o.id}-${i}" value="${item.qty}" min="0" step="0.5"
+              oninput="refreshDeliveryTotal('${o.id}')"
+              style="width:70px;background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:5px 8px;font-size:14px;font-weight:700;text-align:center;color:var(--ink);">
+            <span style="font-size:12px;color:var(--muted);">${item.unit}</span>
+            <span style="margin-left:auto;font-size:13px;font-weight:600;color:var(--green);" id="da-${o.id}-${i}">₹${(item.amount||0).toLocaleString('en-IN')}</span>
+          </div>
+        </div>`;
+      }
     } else {
+      const isLaadiItem = item.weightPending || item.product==='pl';
+      // Confirmed weight (after delivery) or estimated (during order)
+      const confirmedWt = isLaadiItem && item.confirmedWeightKg>0 ? item.confirmedWeightKg : 0;
+      const estWt = isLaadiItem && item.estKg>0 && !confirmedWt ? item.estKg : 0;
+      const weightInfo = confirmedWt ? ' · '+confirmedWt.toFixed(2)+'kg confirmed'
+                        : estWt ? ' · ~'+estWt+'kg est.' : '';
+      const amtDisplay = isLaadiItem
+        ? (confirmedWt>0 ? '₹'+(item.amount||0).toLocaleString('en-IN')
+           : estWt>0 ? '<span style="color:var(--muted);">~₹'+(item.amount||0).toLocaleString('en-IN')+'</span>'
+           : '<span style="color:var(--muted);font-size:12px;">⚖️ TBD</span>')
+        : '₹'+(item.amount||0).toLocaleString('en-IN');
       html += `<div class="order-item-row">
-        <div><div class="item-name">${item.name}${changed?' <span style="color:var(--red);font-size:10px;">MODIFIED</span>':''}</div>
-        <div class="item-detail">${item.qty} ${item.unit} × ₹${item.rate}</div>
-        ${changed?`<div style="font-size:10px;color:var(--muted);text-decoration:line-through;">${orig.qty} ${item.unit} × ₹${orig.rate}</div>`:''}</div>
-        <div class="item-amt">₹${(item.amount||0).toLocaleString('en-IN')}</div>
+        <div><div class="item-name">${item.name}${changed?' <span style="color:var(--red);font-size:10px;">MODIFIED</span>':''}${isLaadiItem&&!confirmedWt?'<span style="font-size:10px;color:#E65100;margin-left:4px;">⚖️ '+(estWt?'est.':'pending')+'</span>':''}</div>
+        <div class="item-detail">${item.qty} ladi${item.qty>1?'s':''} · ₹${item.rate}/kg${weightInfo}</div>
+        ${changed?`<div style="font-size:10px;color:var(--muted);text-decoration:line-through;">${orig.qty} ladi × ₹${orig.rate}/kg</div>`:''}</div>
+        <div class="item-amt">${amtDisplay}</div>
       </div>`;
     }
   });
@@ -1742,9 +1798,13 @@ function orderBodyHTML(o) {
   html += '</div>';
 
   // Total row
+  const hasLaadiItems = items.some(it=>it.weightPending||it.product==='pl');
+  const knownTotal = o.total||0;
   html += `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1.5px solid var(--border);">
     <span style="font-weight:700;">${isDelivery?'Order Total':'Total'}</span>
-    <span style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--amber);" id="dtotal-${o.id}">₹${(o.total||0).toLocaleString('en-IN')}</span>
+    <span style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--amber);" id="dtotal-${o.id}">
+      ₹${knownTotal.toLocaleString('en-IN')}${hasLaadiItems&&isDelivery?'<span style="font-size:12px;color:var(--muted);"> + ⚖️</span>':''}
+    </span>
   </div>`;
 
   if(o.notes)    html += `<div style="background:#FFF8E1;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#795548;">📝 <b>Note:</b> ${o.notes}</div>`;
@@ -1792,11 +1852,15 @@ function orderBodyHTML(o) {
   return html;
 }
 
-// Recalculate delivery total as qty inputs change
+// Recalculate delivery total as qty inputs change (non-laadi items)
 function refreshDeliveryTotal(orderId) {
   const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
   let total = 0;
   o.items.forEach((item,i) => {
+    if(item.weightPending || item.product==='pl') {
+      total += item.amount||0; // use whatever laadi amount has been confirmed
+      return;
+    }
     const el = document.getElementById('dq-'+orderId+'-'+i);
     const qty = el ? parseFloat(el.value)||0 : item.qty;
     const amt = qty * item.rate;
@@ -1808,10 +1872,69 @@ function refreshDeliveryTotal(orderId) {
   if(tEl) tEl.textContent = '₹'+total.toLocaleString('en-IN');
 }
 
+// Recalculate laadi amounts as weights are entered
+function refreshLaadiTotal(orderId, itemIdx) {
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  const item = o.items[itemIdx]; if(!item) return;
+  const ladiCount = item.qty||1;
+  const weights = [];
+  let totalWeight = 0;
+  for(let l=0;l<ladiCount;l++) {
+    const el = document.getElementById('lw-'+orderId+'-'+itemIdx+'-'+l);
+    const w = el ? parseFloat(el.value)||0 : 0;
+    weights.push(w);
+    totalWeight += w;
+    const amtEl = document.getElementById('la-'+orderId+'-'+itemIdx+'-'+l);
+    if(amtEl) amtEl.textContent = w>0 ? '₹'+(w*item.rate).toLocaleString('en-IN') : '—';
+  }
+  // Update item in memory
+  item.ladiWeights = weights;
+  item.amount = totalWeight * item.rate;
+  item.confirmedWeightKg = totalWeight;
+  item.weightPending = totalWeight === 0;
+  // Update total weight display
+  const tWEl = document.getElementById('ltotal-'+orderId+'-'+itemIdx);
+  if(tWEl) tWEl.textContent = totalWeight.toFixed(2)+' kg';
+  // Update item amount display
+  const aEl = document.getElementById('da-'+orderId+'-'+itemIdx);
+  if(aEl) aEl.textContent = totalWeight>0 ? '₹'+item.amount.toLocaleString('en-IN') : '⚖️ TBD';
+  // Recalculate order total
+  const newTotal = o.items.reduce((s,it)=>s+(it.amount||0),0);
+  o.total = newTotal;
+  const tEl = document.getElementById('dtotal-'+orderId);
+  if(tEl) tEl.textContent = '₹'+newTotal.toLocaleString('en-IN');
+}
+
 // Inline mark delivered (no modal needed — uses qty inputs already visible)
 function inlineMarkDelivered(orderId) {
   const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  // First: collect all current weight inputs into items (so pre-filled values count)
+  o.items.forEach((item,i) => {
+    if(!(item.weightPending||item.product==='pl')) return;
+    const ladiCount = item.qty||1;
+    const weights = [];
+    let totalWeight = 0;
+    for(let l=0;l<ladiCount;l++) {
+      const el = document.getElementById('lw-'+orderId+'-'+i+'-'+l);
+      const w = el ? parseFloat(el.value)||0 : 0;
+      weights.push(w); totalWeight += w;
+    }
+    item.ladiWeights = weights;
+    item.confirmedWeightKg = totalWeight;
+    item.amount = totalWeight * item.rate;
+    item.weightPending = totalWeight===0;
+  });
+  // Check for laadi items still missing weights
+  const unweighed = o.items.filter((item)=>(item.weightPending||item.product==='pl')&&!(item.confirmedWeightKg>0));
+  if(unweighed.length) {
+    showToast('⚖️ Enter actual weight for '+unweighed.map(x=>x.name).join(', '));
+    return;
+  }
   const newItems = o.items.map((item,i) => {
+    if(item.weightPending || item.product==='pl') {
+      // Laadi: weights already updated in item by refreshLaadiTotal
+      return {...item, weightPending:false};
+    }
     const el = document.getElementById('dq-'+orderId+'-'+i);
     const qty = el ? parseFloat(el.value)||0 : item.qty;
     return {...item, qty, amount: qty*item.rate};
@@ -1956,6 +2079,11 @@ function clearCustomer() {
 
 function getRate(pid) {
   const c = STATE.selectedCustomer;
+  // Paneer Laadi defaults to the customer's Paneer rate (can be overridden per order)
+  if(pid==='pl') {
+    if(c?.pricing?.paneer) return c.pricing.paneer;
+    return PRODUCTS.find(p=>p.id==='paneer')?.stdRate || 260;
+  }
   if(c?.pricing?.[pid]) return c.pricing[pid];
   return PRODUCTS.find(p=>p.id===pid)?.stdRate || 0;
 }
@@ -1964,49 +2092,122 @@ function renderProductList() {
   document.getElementById('product-list').innerHTML = PRODUCTS.map(p => {
     const rate    = getRate(p.id);
     const qty     = STATE.cart[p.id]?.qty||0;
-    const curRate = STATE.cart[p.id]?.rate||rate;
+    const curRate = STATE.cart[p.id]?.rate!=null ? STATE.cart[p.id].rate : rate;
     const isCustom = STATE.selectedCustomer?.pricing?.[p.id];
-    // Malai Paneer unit toggle
     const curUnit = STATE.cart[p.id]?.unit||p.unit;
-    const unitToggle = p.altUnit ? `
-      <div style="display:flex;gap:4px;margin-top:4px;">
-        <button onclick="setMPUnit('${p.id}','${p.unit}')" style="padding:2px 8px;border-radius:12px;border:1.5px solid var(--border);font-size:10px;font-weight:600;cursor:pointer;background:${curUnit===p.unit?'var(--amber)':'var(--surface)'};color:${curUnit===p.unit?'#fff':'var(--muted)'};">${p.unit}</button>
-        <button onclick="setMPUnit('${p.id}','${p.altUnit}')" style="padding:2px 8px;border-radius:12px;border:1.5px solid var(--border);font-size:10px;font-weight:600;cursor:pointer;background:${curUnit===p.altUnit?'var(--amber)':'var(--surface)'};color:${curUnit===p.altUnit?'#fff':'var(--muted)'};">${p.altUnit}</button>
-      </div>` : '';
-    return `<div class="card" style="margin-bottom:8px;">
-      <div class="card-body" style="padding:10px 14px;">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
-          <div style="flex:1;">
-            <div style="font-size:14px;font-weight:600;">${p.emoji} ${p.name}</div>
-            <div style="font-size:11px;color:${isCustom?'var(--amber)':'var(--muted)'};">
-              ${isCustom?'★ Custom rate':'Standard rate'}
-            </div>
-            ${unitToggle}
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-            <div style="display:flex;align-items:center;gap:6px;">
-              <button class="qty-btn" onclick="updateCart('${p.id}',-1)" style="width:28px;height:28px;font-size:16px;">−</button>
-              <input type="number" id="qty-${p.id}" value="${qty||''}" min="0" step="0.5"
-                placeholder="0"
-                oninput="setCartQty('${p.id}',this.value)"
-                onblur="onCartQtyBlur('${p.id}',this.value)"
-                style="width:56px;text-align:center;font-size:15px;font-weight:700;color:${qty>0?'var(--amber)':'var(--ink)'};background:var(--cream);border:1.5px solid ${qty>0?'var(--amber)':'var(--border)'};border-radius:8px;padding:4px 4px;">
-              <button class="qty-btn" onclick="updateCart('${p.id}',1)" style="width:28px;height:28px;font-size:16px;">+</button>
-            </div>
-            <div style="display:flex;align-items:center;gap:4px;">
-              <span style="font-size:11px;color:var(--muted);">₹</span>
-              <input type="number" id="rate-${p.id}" value="${curRate}" min="0" step="1"
-                oninput="setCartRate('${p.id}',this.value)"
-                style="width:64px;text-align:right;font-size:13px;font-weight:600;color:var(--amber);background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:4px 6px;">
-              <span style="font-size:11px;color:var(--muted);">/${curUnit}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>`;
+
+    // ── Paneer Laadi: ladis + est. weight + editable rate ──────────────
+    if(p.isLaadi) {
+      const ladiQty   = STATE.cart[p.id]?.qty||0;
+      const paneerRate = getRate('paneer');
+      const ladiRate  = STATE.cart[p.id]?.rate!=null ? STATE.cart[p.id].rate : paneerRate;
+      const estKg     = STATE.cart[p.id]?.estKg||0;
+      const estAmt    = (ladiQty>0 && estKg>0) ? Math.round(estKg*ladiRate) : 0;
+      const rateMatchesPaneer = Math.abs(ladiRate-paneerRate)<0.01;
+      const borderColor = ladiQty>0 ? 'var(--amber)' : 'var(--border)';
+      const qtyColor    = ladiQty>0 ? 'var(--amber)' : 'var(--ink)';
+      const qtyBorder   = ladiQty>0 ? 'var(--amber)' : 'var(--border)';
+      const amtColor    = estAmt>0  ? 'var(--amber)' : 'var(--muted)';
+      const estAmtLabel = estAmt>0  ? ('~\u20b9'+estAmt.toLocaleString('en-IN')) : '\u2014';
+      const perLadiNote = (ladiQty>1 && estKg>0)
+        ? '<div style="font-size:11px;color:var(--muted);margin-top:6px;">~'+(estKg/ladiQty).toFixed(1)+' kg per ladi</div>'
+        : '';
+      const rateLabel = rateMatchesPaneer
+        ? '\u20b9/kg <span style="font-weight:400;color:var(--muted);">(same as Paneer)</span>'
+        : '\u20b9/kg <span style="color:var(--amber);">&#9998;</span>';
+
+      return '<div class="card" style="margin-bottom:8px;border-color:'+borderColor+';">'
+        +'<div class="card-body" style="padding:10px 14px;">'
+          +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">'
+            +'<div style="font-size:14px;font-weight:700;">'+p.emoji+' '+p.name+'</div>'
+            +'<div style="font-size:10px;background:#FFF8E1;color:#795548;border-radius:6px;padding:2px 8px;">\u2696\ufe0f actual wt at delivery</div>'
+          +'</div>'
+          +'<div style="display:grid;grid-template-columns:auto auto auto 1fr;gap:8px;align-items:end;">'
+            // Ladis counter
+            +'<div>'
+              +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Ladis</div>'
+              +'<div style="display:flex;align-items:center;gap:3px;">'
+                +'<button class="qty-btn" onclick="updateCart(\'pl\',-1)" style="width:26px;height:26px;font-size:14px;">\u2212</button>'
+                +'<input type="number" id="qty-pl" value="'+(ladiQty||'')+'" min="0" step="1" placeholder="0"'
+                  +' oninput="setCartQty(\'pl\',this.value);updateLaadiEst(\'pl\')"'
+                  +' onblur="onCartQtyBlur(\'pl\',this.value)"'
+                  +' style="width:40px;text-align:center;font-size:16px;font-weight:700;color:'+qtyColor+';background:var(--cream);border:1.5px solid '+qtyBorder+';border-radius:8px;padding:3px;">'
+                +'<button class="qty-btn" onclick="updateCart(\'pl\',1)" style="width:26px;height:26px;font-size:14px;">+</button>'
+              +'</div>'
+            +'</div>'
+            // Est. weight
+            +'<div>'
+              +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Est. Wt</div>'
+              +'<div style="display:flex;align-items:center;gap:3px;">'
+                +'<input type="number" id="estkg-pl" value="'+(estKg||'')+'" min="0" step="0.5" placeholder="kg"'
+                  +' oninput="updateLaadiEst(\'pl\')"'
+                  +' style="width:60px;text-align:center;font-size:14px;font-weight:700;color:var(--ink);background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:4px 3px;">'
+                +'<span style="font-size:11px;color:var(--muted);">kg</span>'
+              +'</div>'
+            +'</div>'
+            // Rate
+            +'<div>'
+              +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">'+rateLabel+'</div>'
+              +'<input type="number" id="rate-pl" value="'+ladiRate+'" min="0" step="1"'
+                +' oninput="setCartRate(\'pl\',this.value);updateLaadiEst(\'pl\')"'
+                +' style="width:62px;text-align:right;font-size:14px;font-weight:700;color:var(--amber);background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:4px 5px;">'
+            +'</div>'
+            // Est amount
+            +'<div style="text-align:right;">'
+              +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Est. Amt</div>'
+              +'<div style="font-size:17px;font-weight:700;color:'+amtColor+';" id="lest-pl">'+estAmtLabel+'</div>'
+            +'</div>'
+          +'</div>'
+          +perLadiNote
+        +'</div>'
+      +'</div>';
+    }
+
+    // Malai Paneer unit toggle
+    const unitToggle = p.altUnit
+      ? ('<div style="display:flex;gap:4px;margin-top:4px;">'
+          +'<button onclick="setMPUnit(\''+p.id+'\',\''+p.unit+'\')" style="padding:2px 8px;border-radius:12px;border:1.5px solid var(--border);font-size:10px;font-weight:600;cursor:pointer;background:'+(curUnit===p.unit?'var(--amber)':'var(--surface)')+';color:'+(curUnit===p.unit?'#fff':'var(--muted)')+';">'+p.unit+'</button>'
+          +'<button onclick="setMPUnit(\''+p.id+'\',\''+p.altUnit+'\')" style="padding:2px 8px;border-radius:12px;border:1.5px solid var(--border);font-size:10px;font-weight:600;cursor:pointer;background:'+(curUnit===p.altUnit?'var(--amber)':'var(--surface)')+';color:'+(curUnit===p.altUnit?'#fff':'var(--muted)')+';">'+p.altUnit+'</button>'
+        +'</div>')
+      : '';
+
+    const qColor  = qty>0 ? 'var(--amber)' : 'var(--ink)';
+    const qBorder = qty>0 ? 'var(--amber)' : 'var(--border)';
+
+    return '<div class="card" style="margin-bottom:8px;">'
+      +'<div class="card-body" style="padding:10px 14px;">'
+        +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">'
+          +'<div style="flex:1;">'
+            +'<div style="font-size:14px;font-weight:600;">'+p.emoji+' '+p.name+'</div>'
+            +'<div style="font-size:11px;color:'+(isCustom?'var(--amber)':'var(--muted)')+';">'
+              +(isCustom?'&#9733; Custom rate':'Standard rate')
+            +'</div>'
+            +unitToggle
+          +'</div>'
+          +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">'
+            +'<div style="display:flex;align-items:center;gap:6px;">'
+              +'<button class="qty-btn" onclick="updateCart(\''+p.id+'\',-1)" style="width:28px;height:28px;font-size:16px;">\u2212</button>'
+              +'<input type="number" id="qty-'+p.id+'" value="'+(qty||'')+'" min="0" step="0.5" placeholder="0"'
+                +' oninput="setCartQty(\''+p.id+'\',this.value)"'
+                +' onblur="onCartQtyBlur(\''+p.id+'\',this.value)"'
+                +' style="width:56px;text-align:center;font-size:15px;font-weight:700;color:'+qColor+';background:var(--cream);border:1.5px solid '+qBorder+';border-radius:8px;padding:4px 4px;">'
+              +'<button class="qty-btn" onclick="updateCart(\''+p.id+'\',1)" style="width:28px;height:28px;font-size:16px;">+</button>'
+            +'</div>'
+            +'<div style="display:flex;align-items:center;gap:4px;">'
+              +'<span style="font-size:11px;color:var(--muted);">\u20b9</span>'
+              +'<input type="number" id="rate-'+p.id+'" value="'+curRate+'" min="0" step="1"'
+                +' oninput="setCartRate(\''+p.id+'\',this.value)"'
+                +' style="width:64px;text-align:right;font-size:13px;font-weight:600;color:var(--amber);background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:4px 6px;">'
+              +'<span style="font-size:11px;color:var(--muted);">/'+curUnit+'</span>'
+            +'</div>'
+          +'</div>'
+        +'</div>'
+      +'</div>'
+    +'</div>';
   }).join('');
   updateOrderSummary();
 }
+
 
 function setMPUnit(pid, unit) {
   const p = PRODUCTS.find(x=>x.id===pid);
@@ -2072,15 +2273,35 @@ function updateCart(pid, delta) {
 function updateOrderSummary() {
   const items = Object.entries(STATE.cart).map(([pid,v])=>{
     const p=PRODUCTS.find(x=>x.id===pid);
-    return {product:pid,name:p.name,qty:v.qty,rate:v.rate,unit:v.unit||p.unit,amount:v.qty*v.rate};
+    const isLaadi = p.isLaadi||false;
+    const estKg = v.estKg||0;
+    const laadiRate = isLaadi ? (v.rate||getRate('paneer')) : v.rate;
+    const estAmt = isLaadi && estKg>0 ? Math.round(estKg*laadiRate) : 0;
+    return {product:pid,name:p.name,qty:v.qty,rate:v.rate,unit:v.unit||p.unit,
+            amount:isLaadi?estAmt:v.qty*v.rate, isLaadi, estKg};
   }).filter(x=>x.qty>0);
-  const total = items.reduce((s,i)=>s+i.amount,0);
-  document.getElementById('order-total').textContent='₹'+total.toLocaleString('en-IN');
+  const nonLaadiTotal = items.filter(i=>!i.isLaadi).reduce((s,i)=>s+i.amount,0);
+  const laadiEstTotal = items.filter(i=>i.isLaadi).reduce((s,i)=>s+i.amount,0);
+  const grandEst = nonLaadiTotal + laadiEstTotal;
+  const hasLaadi = items.some(i=>i.isLaadi);
+  const totalEl = document.getElementById('order-total');
+  if(hasLaadi) {
+    totalEl.innerHTML = '~₹'+grandEst.toLocaleString('en-IN')
+      +' <span style="font-size:11px;color:var(--muted);font-weight:500;">(estimated · ⚖️ confirmed at delivery)</span>';
+  } else {
+    totalEl.textContent = '₹'+grandEst.toLocaleString('en-IN');
+  }
   const sumEl = document.getElementById('order-summary-items');
   sumEl.innerHTML = items.length ? items.map(i=>`
     <div class="order-item-row">
-      <div><div class="item-name">${i.name}</div><div class="item-detail">${i.qty} ${i.unit} × ₹${i.rate}</div></div>
-      <div class="item-amt">₹${i.amount.toLocaleString('en-IN')}</div>
+      <div><div class="item-name">${i.name}</div>
+        <div class="item-detail">${i.isLaadi
+          ? i.qty+' ladi'+(i.qty>1?'s':'')+' · ~'+i.estKg+'kg · ₹'+i.rate+'/kg'
+          : i.qty+' '+i.unit+' × ₹'+i.rate}</div>
+      </div>
+      <div class="item-amt">${i.isLaadi
+        ? (i.amount>0?'~₹'+i.amount.toLocaleString('en-IN'):'<span style="color:var(--muted);font-size:12px;">add est. kg</span>')
+        : '₹'+i.amount.toLocaleString('en-IN')}</div>
     </div>`).join('')
     : '<div style="color:var(--muted);font-size:13px;padding:8px 0;">No items added yet</div>';
 }
@@ -2088,7 +2309,14 @@ function updateOrderSummary() {
 function submitOrder() {
   const items = Object.entries(STATE.cart).map(([pid,v])=>{
     const p=PRODUCTS.find(x=>x.id===pid);
-    return {product:pid,name:p.name,qty:v.qty,rate:v.rate,unit:p.unit,amount:v.qty*v.rate};
+    const isLaadi = p.isLaadi||false;
+    const rate = isLaadi ? getRate('pl') : v.rate; // laadi always uses paneer rate
+    const estKg = isLaadi ? (v.estKg||0) : 0;
+    return {product:pid,name:p.name,qty:v.qty,rate:rate,unit:isLaadi?'ladi':p.unit,
+            amount:isLaadi?(estKg*rate):v.qty*rate,
+            weightPending:isLaadi?true:undefined,
+            estKg:isLaadi?estKg:undefined,
+            ladiWeights:isLaadi?[]:undefined};
   }).filter(x=>x.qty>0);
   if(!items.length) { showToast('Add at least one product'); return; }
   if(!STATE.selectedCustomer) { showToast('Select a customer first'); return; }
@@ -2702,7 +2930,6 @@ function clearLocalOrders() {
 
 // ── APPS SCRIPT CODE ─────────────────────────────────────────────────
 function getAppsScriptCode() {
-  // Using array join to avoid any backtick/quote conflicts
   var lines = [
     '// GAAVN FRESH \u2014 Sales App \u00b7 Google Apps Script',
     '// Deploy: Execute as Me | Who has access: Anyone',
@@ -2713,15 +2940,10 @@ function getAppsScriptCode() {
     'function doGet(e) {',
     '  try {',
     '    var action = e.parameter.action || "";',
-    '    if (action === "ping") {',
-    '      var ss = SpreadsheetApp.openById(SS_ID);',
-    '      var sh = ss.getSheetByName("Ping_Log") || ss.insertSheet("Ping_Log");',
-    '      if (sh.getLastRow() === 0) sh.appendRow(["Timestamp","Action"]);',
-    '      sh.appendRow([new Date().toLocaleString("en-IN"), "ping"]);',
-    '      return jsonOut({status:"ok", pong:true});',
-    '    }',
-    '    if (action === "logOrder")  return logOrder(e.parameter);',
-    '    if (action === "getOrders") return getOrders(e.parameter);',
+    '    if (action === "ping")       return handlePing(e);',
+    '    if (action === "logOrder")   return logOrder(e.parameter);',
+    '    if (action === "logPayment") return logPayment(e.parameter);',
+    '    if (action === "getOrders")  return getOrders(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + action});',
     '  } catch(err) {',
     '    return jsonOut({error: err.message});',
@@ -2734,20 +2956,45 @@ function getAppsScriptCode() {
     '    .setMimeType(ContentService.MimeType.JSON);',
     '}',
     '',
-    '// \u2500\u2500 LOG / UPDATE ORDER \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+    'function handlePing(e) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var sh = ss.getSheetByName("Ping_Log") || ss.insertSheet("Ping_Log");',
+    '  if (sh.getLastRow() === 0) sh.appendRow(["Timestamp","Action"]);',
+    '  sh.appendRow([new Date().toLocaleString("en-IN"), "ping"]);',
+    '  return jsonOut({status:"ok", pong:true});',
+    '}',
+    '',
+    '// \u2500\u2500 MONTHLY SHEET NAME \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+    'function getMonthTag(dateStr) {',
+    '  // dateStr = "YYYY-MM-DD" -> returns "YYYY-MM" for sheet name',
+    '  if (!dateStr || dateStr === "undefined") {',
+    '    dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
+    '  }',
+    '  return dateStr.slice(0, 7); // "2026-04"',
+    '}',
+    '',
+    'function getOrdersSheetName(dateStr) {',
+    '  return "Orders_" + getMonthTag(dateStr);',
+    '}',
+    '',
+    'function getPaymentsSheetName(dateStr) {',
+    '  return "Payments_" + getMonthTag(dateStr);',
+    '}',
+    '',
+    '// \u2500\u2500 LOG / UPDATE ORDER \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
     'function logOrder(p) {',
     '  var ss = SpreadsheetApp.openById(SS_ID);',
-    '  // Guard: never create sheet with undefined/empty name',
     '  var rawDate = String(p.date || "").trim();',
     '  if (!rawDate || rawDate === "undefined") {',
     '    rawDate = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
     '  }',
-    '  var dateTag = rawDate.replace(/-/g, "");',
-    '  var sh = getOrCreateSheet(ss, "Orders_" + dateTag);',
+    '  var sheetName = getOrdersSheetName(rawDate);',
+    '  var sh = getOrCreateSheet(ss, sheetName);',
+    '  var headers = ["Order ID","Date","Customer","Category","Area","Status",',
+    '    "Total (Rs)","Payment Mode","Payment Amt","Items","Notes","Mod Notes","Created By","Synced At","Items Raw"];',
     '  if (sh.getLastRow() === 0) {',
-    '    sh.appendRow(["Order ID","Date","Customer","Category","Area","Status",',
-    '      "Total (Rs)","Payment Mode","Payment Amt","Items","Notes","Mod Notes","Created By","Synced At","Items Raw"]);',
-    '    sh.getRange(1,1,1,15).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#FFFFFF");',
+    '    sh.appendRow(headers);',
+    '    sh.getRange(1,1,1,headers.length).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#FFFFFF");',
     '    sh.setFrozenRows(1);',
     '  }',
     '  var items = [];',
@@ -2756,20 +3003,21 @@ function getAppsScriptCode() {
     '    return i.qty + " " + i.unit + " " + i.name + " @Rs" + i.rate;',
     '  }).join(", ");',
     '  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");',
-    '  // Check if order already exists \u2014 update it',
     '  var data = sh.getDataRange().getValues();',
+    '  // Check if this is a day-total separator row (skip it) or order row',
     '  for (var r = 1; r < data.length; r++) {',
     '    if (String(data[r][0]) === String(p.orderId)) {',
-    '      sh.getRange(r+1,1,1,15).setValues([[',
+    '      sh.getRange(r+1,1,1,headers.length).setValues([[',
     '        p.orderId, p.date, p.customerName, p.customerCategory||"", p.customerArea||"",',
     '        p.status, parseFloat(p.total)||0, p.paymentMode||"", parseFloat(p.paymentAmount)||0,',
     '        itemStr, p.notes||"", p.modNotes||"", p.createdBy||"", now, p.items||""',
     '      ]]);',
     '      applyRowColor(sh, r+1, p.status);',
+    '      updateDayTotals(sh, rawDate);',
     '      return jsonOut({status:"updated", row:r+1});',
     '    }',
     '  }',
-    '  // New row',
+    '  // New row — append before inserting/updating day total',
     '  sh.appendRow([',
     '    p.orderId, p.date, p.customerName, p.customerCategory||"", p.customerArea||"",',
     '    p.status, parseFloat(p.total)||0, p.paymentMode||"", parseFloat(p.paymentAmount)||0,',
@@ -2777,16 +3025,52 @@ function getAppsScriptCode() {
     '  ]);',
     '  var newRow = sh.getLastRow();',
     '  applyRowColor(sh, newRow, p.status);',
-    '  // Also append to master All_Orders sheet',
-    '  var master = getOrCreateSheet(ss, "All_Orders");',
-    '  if (master.getLastRow() === 0) {',
-    '    master.appendRow(["Order ID","Date","Customer","Category","Area","Status","Total","Payment","Items","Synced At"]);',
-    '    master.getRange(1,1,1,10).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#FFFFFF");',
-    '    master.setFrozenRows(1);',
-    '  }',
-    '  master.appendRow([p.orderId, p.date, p.customerName, p.customerCategory||"",',
-    '    p.customerArea||"", p.status, parseFloat(p.total)||0, p.paymentMode||"", itemStr, now]);',
+    '  updateDayTotals(sh, rawDate);',
     '  return jsonOut({status:"ok", row:newRow});',
+    '}',
+    '',
+    '// \u2500\u2500 DAY TOTALS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+    '// Called after every order write. Removes old day-total row and re-inserts',
+    '// a fresh summary row at the bottom for that day.',
+    'function updateDayTotals(sh, dateStr) {',
+    '  var data = sh.getDataRange().getValues();',
+    '  // Remove existing total rows for this date (col A starts with "TOTAL:")',
+    '  var rowsToDelete = [];',
+    '  for (var r = data.length - 1; r >= 1; r--) {',
+    '    if (String(data[r][0]).indexOf("TOTAL:" + dateStr) === 0) {',
+    '      rowsToDelete.push(r + 1); // 1-based',
+    '    }',
+    '  }',
+    '  // Delete from bottom up to maintain row indices',
+    '  rowsToDelete.sort(function(a,b){return b-a;});',
+    '  rowsToDelete.forEach(function(r){ sh.deleteRow(r); });',
+    '  // Re-read after deletions',
+    '  data = sh.getDataRange().getValues();',
+    '  // Sum all rows matching this date',
+    '  var totalSales = 0, totalPaid = 0, orderCount = 0;',
+    '  for (var i = 1; i < data.length; i++) {',
+    '    var rowDate = String(data[i][0]).indexOf("TOTAL:") === 0 ? null : String(data[i][1]);',
+    '    if (rowDate === dateStr) {',
+    '      totalSales += parseFloat(data[i][6]) || 0;',
+    '      totalPaid  += parseFloat(data[i][8]) || 0;',
+    '      orderCount++;',
+    '    }',
+    '  }',
+    '  if (orderCount === 0) return;',
+    '  // Append total row',
+    '  var d = new Date(dateStr + "T00:00:00");',
+    '  var dateLabel = Utilities.formatDate(d, Session.getScriptTimeZone(), "dd/MM/yyyy");',
+    '  sh.appendRow([',
+    '    "TOTAL:" + dateStr, dateStr,',
+    '    "\u25ba DAY TOTAL \u2014 " + dateLabel + " (" + orderCount + " orders)",',
+    '    "", "", "SUMMARY",',
+    '    totalSales, "", totalPaid,',
+    '    "Sales: Rs" + totalSales + " | Collected: Rs" + totalPaid + " | Due: Rs" + (totalSales-totalPaid),',
+    '    "", "", "", "", ""',
+    '  ]);',
+    '  var totalRow = sh.getLastRow();',
+    '  sh.getRange(totalRow,1,1,15)',
+    '    .setBackground("#1A3A1F").setFontColor("#FFFFFF").setFontWeight("bold");',
     '}',
     '',
     'function applyRowColor(sh, row, status) {',
@@ -2797,17 +3081,59 @@ function getAppsScriptCode() {
     '  sh.getRange(row,1,1,15).setBackground(colors[status] || "#FFFFFF");',
     '}',
     '',
+    '// \u2500\u2500 LOG PAYMENT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+    'function logPayment(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate = String(p.date || "").trim();',
+    '  if (!rawDate || rawDate === "undefined") {',
+    '    rawDate = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
+    '  }',
+    '  var sheetName = getPaymentsSheetName(rawDate);',
+    '  var sh = getOrCreateSheet(ss, sheetName);',
+    '  var headers = ["Pay ID","Date","Customer","Cust ID","Amount (Rs)","Mode","Reference","Notes","Created By","Synced At"];',
+    '  if (sh.getLastRow() === 0) {',
+    '    sh.appendRow(headers);',
+    '    sh.getRange(1,1,1,headers.length).setFontWeight("bold").setBackground("#0D47A1").setFontColor("#FFFFFF");',
+    '    sh.setFrozenRows(1);',
+    '  }',
+    '  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");',
+    '  // Update existing entry if payId matches',
+    '  var data = sh.getDataRange().getValues();',
+    '  for (var r = 1; r < data.length; r++) {',
+    '    if (String(data[r][0]) === String(p.payId)) {',
+    '      sh.getRange(r+1,1,1,headers.length).setValues([[',
+    '        p.payId, p.date, p.custName||"", p.custId||"",',
+    '        parseFloat(p.amount)||0, p.mode||"", p.ref||"", p.notes||"",',
+    '        p.createdBy||"", now',
+    '      ]]);',
+    '      sh.getRange(r+1,1,1,headers.length).setBackground("#E8F5E9");',
+    '      return jsonOut({status:"updated", row:r+1});',
+    '    }',
+    '  }',
+    '  sh.appendRow([',
+    '    p.payId, p.date, p.custName||"", p.custId||"",',
+    '    parseFloat(p.amount)||0, p.mode||"", p.ref||"", p.notes||"",',
+    '    p.createdBy||"", now',
+    '  ]);',
+    '  sh.getRange(sh.getLastRow(),1,1,headers.length).setBackground("#E8F5E9");',
+    '  return jsonOut({status:"ok", row:sh.getLastRow()});',
+    '}',
+    '',
     'function getOrders(p) {',
     '  var ss = SpreadsheetApp.openById(SS_ID);',
     '  var rawDate2 = String(p.date || "").trim();',
     '  if (!rawDate2 || rawDate2 === "undefined") rawDate2 = TODAY();',
-    '  var sheetName = "Orders_" + rawDate2.replace(/-/g, "");',
+    '  var sheetName = getOrdersSheetName(rawDate2);',
     '  var sh = ss.getSheetByName(sheetName);',
     '  if (!sh) return jsonOut({orders:[], error:"No sheet for " + p.date});',
     '  var data = sh.getDataRange().getValues();',
     '  if (data.length < 2) return jsonOut({orders:[], date:p.date});',
     '  var headers = data[0];',
-    '  var orders = data.slice(1).map(function(row) {',
+    '  // Filter only rows for the requested date (skip TOTAL: rows and other dates)',
+    '  var orders = data.slice(1).filter(function(row) {',
+    '    var id = String(row[0]);',
+    '    return id && id.indexOf("TOTAL:") !== 0 && String(row[1]) === rawDate2;',
+    '  }).map(function(row) {',
     '    var obj = {};',
     '    headers.forEach(function(h,i){ obj[h] = row[i] !== undefined ? row[i] : ""; });',
     '    return obj;',
@@ -2864,7 +3190,17 @@ function copyWhatsApp() {
     lines.push((idx+1) + '. ' + statusIcon + ' *' + o.customerName + '* ' + catEmoji);
     if (o.customerArea) lines.push('   📍 ' + o.customerArea);
     (o.items || []).forEach(item => {
-      lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
+      if(item.weightPending || item.product==='pl') {
+        const confirmedWt = item.confirmedWeightKg||0;
+        const estWt = item.estKg||0;
+        const wtStr = confirmedWt>0
+          ? confirmedWt.toFixed(2)+'kg (confirmed) @ ₹'+item.rate+'/kg = ₹'+item.amount.toLocaleString('en-IN')
+          : estWt>0 ? '~'+estWt+'kg (est.) @ ₹'+item.rate+'/kg ≈ ₹'+item.amount.toLocaleString('en-IN')+' · ⚖️ weight at delivery'
+          : '⚖️ weight to be confirmed at delivery';
+        lines.push('   • ' + item.name + ': ' + item.qty + ' ladi' + (item.qty>1?'s':'') + ' · ' + wtStr);
+      } else {
+        lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
+      }
       if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0};
       prodTotals[item.name].qty  += item.qty;
       prodTotals[item.name].amt  += item.amount;
@@ -3916,10 +4252,20 @@ function editPaymentIn(id) {
 
 function deletePaymentIn(id) {
   if(!confirm('Delete this payment entry?')) return;
+  const p = STATE.payments.find(x=>x.id===id);
+  if(p && p.custId) {
+    // Reverse the payment — add amount back to customer balance
+    const cust = STATE.customers.find(c=>c.id===p.custId);
+    if(cust) {
+      cust.balance = (cust.balance||0) + (p.amount||0);
+      _saveCustomerBalance(cust);
+    }
+  }
   STATE.payments = STATE.payments.filter(x=>x.id!==id);
   savePaymentLedger();
   renderPaymentIn();
-  showToast('Payment deleted');
+  renderDues();
+  showToast('Payment deleted — balance restored');
 }
 
 // ── Customer search dropdown ──────────────────────────────────────────
@@ -3982,10 +4328,16 @@ function savePaymentIn() {
   if(!date) { showToast('Select payment date'); return; }
 
   const editId = document.getElementById('pi-edit-id').value;
+  let oldAmount = 0;
+  let oldCustId = '';
   if(editId) {
-    // Editing existing
+    // Editing existing — reverse old balance impact first
     const p = STATE.payments.find(x=>x.id===editId);
-    if(p) Object.assign(p, {custName,custId,date,amount,mode,ref,notes,updatedAt:Date.now()});
+    if(p) {
+      oldAmount = p.amount||0;
+      oldCustId = p.custId||'';
+      Object.assign(p, {custName,custId,date,amount,mode,ref,notes,updatedAt:Date.now()});
+    }
   } else {
     // New entry
     const newEntry = {
@@ -3996,19 +4348,29 @@ function savePaymentIn() {
     STATE.payments.unshift(newEntry);
   }
 
-  // Update customer balance (reduce outstanding)
+  // Update customer balance — reverse old, apply new
+  if(editId && oldCustId) {
+    const oldCust = STATE.customers.find(c=>c.id===oldCustId);
+    if(oldCust) {
+      oldCust.balance = Math.max(0, (oldCust.balance||0) + oldAmount);
+      _saveCustomerBalance(oldCust);
+    }
+  }
   if(custId) {
     const cust = STATE.customers.find(c=>c.id===custId);
-    if(cust && (cust.balance||0) > 0) {
+    if(cust) {
       cust.balance = Math.max(0, (cust.balance||0) - amount);
-      const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
-      const ei = extras.findIndex(x=>x.id===custId);
-      if(ei>=0) extras[ei].balance=cust.balance; else extras.push({id:custId,balance:cust.balance});
-      localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+      _saveCustomerBalance(cust);
     }
   }
 
   savePaymentLedger();
+
+  // Sync to Google Sheet (new and edited payments)
+  if(getSheetUrl()) {
+    const payEntry = editId ? STATE.payments.find(x=>x.id===editId) : STATE.payments[0];
+    if(payEntry) syncPaymentToSheet(payEntry);
+  }
 
   // ── If this payment was opened from History/Orders context, update that order's status too ──
   const modal = document.getElementById('modal-payment-in');
@@ -4027,7 +4389,34 @@ function savePaymentIn() {
   else if(activeScreen?.id==='screen-orders') renderOrdersList();
   else if(activeScreen?.id==='screen-payment-in') renderPaymentIn();
   else renderPaymentIn();
-  showToast(editId?'✓ Payment updated':'✓ Payment recorded — ₹'+amount.toLocaleString('en-IN'));
+  renderDues();
+  showToast(editId?'✓ Payment updated — balance adjusted':'✓ Payment recorded — ₹'+amount.toLocaleString('en-IN'));
+}
+
+// Helper: persist a single customer's balance to localStorage extras
+function _saveCustomerBalance(cust) {
+  const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+  const ei = extras.findIndex(x=>x.id===cust.id);
+  if(ei>=0) extras[ei].balance=cust.balance; else extras.push({id:cust.id,balance:cust.balance});
+  localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+}
+
+// Sync a payment entry to Google Sheet (Payments tab)
+async function syncPaymentToSheet(p) {
+  const url = getSheetUrl(); if(!url) return;
+  const params = new URLSearchParams({
+    action:'logPayment',
+    payId:   p.id,
+    date:    p.date||TODAY_KEY,
+    custName:p.custName||'',
+    custId:  p.custId||'',
+    amount:  p.amount||0,
+    mode:    p.mode||'',
+    ref:     p.ref||'',
+    notes:   p.notes||'',
+    createdBy: p.createdBy||STATE.role||'',
+  });
+  await fireAndForget(url+'?'+params.toString());
 }
 
 // Update order payment info and status in localStorage
