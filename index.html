@@ -318,6 +318,7 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div class="page-title" id="orders-screen-title">Orders</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;" id="orders-action-btns">
+        <button onclick="syncOrdersFromSheet()" id="btn-sync-orders" style="background:var(--blue,#1A527A);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">☁ Sync</button>
         <button onclick="copyWhatsApp()" id="btn-wa" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">💬 WA</button>
         <button onclick="openSequenceScreen()" id="btn-seq" style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">🔢 Sequence</button>
         <button onclick="shareToDelivery()" id="btn-share" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📦 Share</button>
@@ -1701,6 +1702,10 @@ function initApp() {
   } else if(STATE.role === 'delivery') {
     loadPastDuesForDelivery();
   }
+  // If orders still empty after loading localStorage, auto-fetch from sheet
+  if(STATE.orders.length === 0 && STATE.sheetUrl) {
+    setTimeout(syncOrdersFromSheet, 1000);
+  }
   // Load saved sheet URL — check URL params first (allows pre-configuration via link)
   const urlParams = new URLSearchParams(window.location.search);
   const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
@@ -2518,12 +2523,13 @@ function submitOrder() {
 
   if(isBackdated) {
     // Save ONLY to the correct past date's localStorage key
-    // Do NOT add to STATE.orders — that would show it in today's orders list
+    // Save backdated order to its date key in localStorage
     const bdKey = LS_PREFIX + orderDate;
     const existing = JSON.parse(localStorage.getItem(bdKey)||'[]');
     existing.unshift(order);
     localStorage.setItem(bdKey, JSON.stringify(existing));
-    // Do NOT call saveOrders() here — that writes to TODAY's key
+    // Also add to STATE.orders so it shows in My Orders (grouped by date)
+    STATE.orders.unshift(order);
   } else {
     STATE.orders.unshift(order);
     saveOrders();
@@ -2566,8 +2572,26 @@ function submitOrder() {
 // ── MODIFY ORDER ─────────────────────────────────────────────────────
 // openEditOrder is called from order cards for sales/owner role
 function openEditOrder(orderId) {
-  const o = STATE.orders.find(x=>x.id===orderId);
-  if(!o) return;
+  // First check STATE.orders (in-memory), then fall back to searching all localStorage date keys
+  let o = STATE.orders.find(x=>x.id===orderId);
+  if(!o) {
+    // Search all stored date keys - handles orders loaded from sheet or not in STATE
+    for(let i=0; i<localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if(!key || !key.startsWith(LS_PREFIX)) continue;
+      try {
+        const orders = JSON.parse(localStorage.getItem(key)||'[]');
+        const found = orders.find(x=>x.id===orderId);
+        if(found) {
+          o = found;
+          // Also add to STATE.orders so save/sync works
+          if(!STATE.orders.find(x=>x.id===orderId)) STATE.orders.push(found);
+          break;
+        }
+      } catch(e) {}
+    }
+  }
+  if(!o) { showToast('Order not found — try reloading the app'); return; }
   document.getElementById('edit-order-id').value   = orderId;
   document.getElementById('edit-order-title').textContent = 'Edit Order #'+orderId;
   document.getElementById('edit-order-customer').textContent = o.customerName + (o.customerArea?' · '+o.customerArea:'');
@@ -4313,9 +4337,9 @@ function renderHistoryOrders(orders, date) {
         💰 ${o.status==='due'||o.status==='partial'?'Collect Payment':'Record Payment'}
       </button>` : '';
     const editBtn = canPayRole ? `
-      <button onclick="openEditOrder('${o.id}')"
+      <button onclick="openEditOrder('${o.id}')" ontouchstart=""
         style="margin-top:6px;width:100%;padding:9px;border-radius:8px;border:1.5px solid var(--border);
-          background:#fff;color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;">
+          background:#fff;color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;-webkit-tap-highlight-color:rgba(0,0,0,0.1);">
         ✏ Edit Order
       </button>` : '';
 
@@ -4550,6 +4574,83 @@ function resetSequence() {
 // ── LOAD PAST DUES FOR DELIVERY ──────────────────────────────────────
 // Delivery person needs to see outstanding dues from previous days
 // so they can collect payment during their round.
+async function syncOrdersFromSheet() {
+  // Fetch today's AND recent orders from Google Sheet into STATE.orders + localStorage
+  if(!STATE.sheetUrl) {
+    showToast('No Sheet URL configured — go to Setup'); return;
+  }
+  const btn = document.getElementById('btn-sync-orders');
+  if(btn) { btn.textContent = '⏳ Syncing...'; btn.disabled = true; }
+
+  try {
+    // Fetch last 30 days
+    const today = new Date();
+    const dates = [];
+    for(let i=0; i<30; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      dates.push(y+'-'+m+'-'+day);
+    }
+
+    let totalAdded = 0;
+    const existingIds = new Set(STATE.orders.map(o=>o.id));
+
+    for(const date of dates) {
+      try {
+        const url = STATE.sheetUrl + '?action=getOrders&date=' + date;
+        const res = await fetch(url);
+        const json = await res.json();
+        if(json.orders && json.orders.length) {
+          const dateOrders = [];
+          json.orders.forEach(row => {
+            // Parse order from sheet row
+            const orderId = String(row['Order ID']||'').trim();
+            if(!orderId) return;
+            let items = [];
+            try { items = JSON.parse(row['Items Raw']||'[]'); } catch(e) {}
+            const o = {
+              id: orderId,
+              date: date,
+              customerName: row['Customer']||'',
+              customerCategory: row['Category']||'',
+              customerArea: row['Area']||'',
+              status: row['Status']||'confirmed',
+              total: parseFloat(row['Total (Rs)'])||0,
+              items: items,
+              notes: row['Notes']||'',
+              synced: true,
+              loadedFromSheet: true,
+            };
+            dateOrders.push(o);
+            if(!existingIds.has(orderId)) {
+              STATE.orders.push(o);
+              existingIds.add(orderId);
+              totalAdded++;
+            }
+          });
+          // Save to localStorage for offline access
+          if(dateOrders.length) {
+            localStorage.setItem(LS_PREFIX + date, JSON.stringify(dateOrders));
+          }
+        }
+      } catch(e) {
+        // Skip dates that fail (no sheet for that month etc.)
+      }
+    }
+
+    renderOrdersList();
+    renderDashboard();
+    showToast('✓ Synced ' + totalAdded + ' orders from Sheet');
+  } catch(err) {
+    showToast('Sync failed — check connection');
+  } finally {
+    if(btn) { btn.textContent = '☁ Sync'; btn.disabled = false; }
+  }
+}
+
 function loadAllPastOrders() {
   // Load ALL orders from all date keys for sales/owner role
   const todayIds = new Set(STATE.orders.map(o => o.id));
