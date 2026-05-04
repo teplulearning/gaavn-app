@@ -1745,6 +1745,10 @@ function saveOrders() {
   });
   Object.entries(byDate).forEach(([date, orders]) => {
     localStorage.setItem(LS_PREFIX + date, JSON.stringify(orders));
+    // Also maintain LS_ORDERS for today so initial load always works
+    if(date === TODAY_KEY) {
+      localStorage.setItem(LS_ORDERS, JSON.stringify(orders));
+    }
   });
 }
 
@@ -2080,6 +2084,23 @@ function filterOrders(f, btn) {
 }
 
 function renderOrdersList() {
+  // Merge any localStorage orders not yet in STATE.orders (e.g. from previous sessions)
+  const existingIds = new Set(STATE.orders.map(o=>o.id));
+  for(let i=0; i<localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(!key || !key.startsWith(LS_PREFIX)) continue;
+    const date = key.slice(LS_PREFIX.length);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    try {
+      const stored = JSON.parse(localStorage.getItem(key)||'[]');
+      stored.forEach(o => {
+        if(!existingIds.has(o.id)) {
+          STATE.orders.push(o);
+          existingIds.add(o.id);
+        }
+      });
+    } catch(e) {}
+  }
   applySequenceToOrders();
   let orders = [...STATE.orders];
   if(STATE.role==='delivery') {
@@ -2571,6 +2592,31 @@ function submitOrder() {
 
 // ── MODIFY ORDER ─────────────────────────────────────────────────────
 // openEditOrder is called from order cards for sales/owner role
+function deleteOrderFromHistory(orderId, orderDate) {
+  if(!confirm('Delete this order? This cannot be undone.')) return;
+
+  // Remove from STATE.orders
+  STATE.orders = STATE.orders.filter(o => o.id !== orderId);
+
+  // Remove from localStorage for that date
+  const dateKey = LS_PREFIX + (orderDate || TODAY_KEY);
+  try {
+    const stored = JSON.parse(localStorage.getItem(dateKey)||'[]');
+    const filtered = stored.filter(o => o.id !== orderId);
+    localStorage.setItem(dateKey, JSON.stringify(filtered));
+    // Also update LS_ORDERS if it's today
+    if(orderDate === TODAY_KEY) {
+      localStorage.setItem(LS_ORDERS, JSON.stringify(filtered));
+    }
+  } catch(e) {}
+
+  // Refresh UI
+  renderHistory();
+  renderOrdersList();
+  renderDashboard();
+  showToast('Order deleted');
+}
+
 function openEditOrder(orderId) {
   // First check STATE.orders (in-memory), then fall back to searching all localStorage date keys
   let o = STATE.orders.find(x=>x.id===orderId);
@@ -2684,6 +2730,10 @@ function saveEditOrder() {
   if(STATE.sheetUrl) syncOneOrder(orderId);
   renderDashboard();
   renderOrdersList();
+  // Also refresh History if it's open
+  if(document.getElementById('screen-history')?.classList.contains('active')) {
+    renderHistory();
+  }
   showToast('✓ Order updated'+(newDate && newDate!==oldDate?' · moved to '+newDate:''));
 }
 
@@ -4342,6 +4392,12 @@ function renderHistoryOrders(orders, date) {
           background:#fff;color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;-webkit-tap-highlight-color:rgba(0,0,0,0.1);">
         ✏ Edit Order
       </button>` : '';
+    const deleteBtn = (STATE.role==='owner' || STATE.role==='sales') ? `
+      <button data-oid="${o.id}" data-odate="${o.date||date}" onclick="deleteOrderFromHistory(this.dataset.oid, this.dataset.odate)" ontouchstart=""
+        style="margin-top:4px;width:100%;padding:8px;border-radius:8px;border:1.5px solid #FFCDD2;
+          background:#fff;color:#C62828;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;">
+        🗑 Delete Order
+      </button>` : '';
 
     return `
       <div id="hcard-${o.id}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;background:#fff;">
@@ -4360,6 +4416,7 @@ function renderHistoryOrders(orders, date) {
         ${payInfo}
         ${payBtn}
         ${editBtn}
+        ${deleteBtn}
         <div style="font-size:10px;color:var(--muted);margin-top:6px;opacity:0.6;">#${o.id}${o.createdBy?' · '+o.createdBy:''}</div>
       </div>`;
   }).join('');
