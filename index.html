@@ -3709,8 +3709,9 @@ function getDeliverySequence() {
 }
 
 function copyWhatsApp() {
-  const orders = STATE.orders;
-  if (!orders.length) { showToast('No orders today to share'); return; }
+  // Only include TODAY's orders in the WhatsApp summary
+  const orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === TODAY_KEY);
+  if (!orders.length) { showToast('No orders for today to share'); return; }
 
   const d = new Date();
   const dateStr = d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
