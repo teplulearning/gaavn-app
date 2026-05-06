@@ -2208,6 +2208,8 @@ function renderApprovals() {
 function initNewOrder() {
   STATE.selectedCustomer = null; STATE.cart = {};
   STATE.orderDate = TODAY_KEY; // default to today
+  // Pull any new customers from sheet in background so they appear in search
+  if(STATE.sheetUrl && STATE.customers.length < 10) syncCustomersFromSheet();
   document.getElementById('step-customer').style.display = 'block';
   document.getElementById('step-products').style.display = 'none';
   document.getElementById('cust-search').value = '';
@@ -3233,15 +3235,29 @@ function downloadCustomerList() {
   });
 
   // Build CSV
-  const csv = rows.map(row =>
-    row.map(v => '"'+String(v||'').replace(/"/g,'""')+'"').join(',')
-  ).join('\n');
+  // Build Excel XML — opens directly in Excel
+  let xml = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>';
+  xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
+  xml += '<Styles><Style ss:ID="h"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#1A3A1F" ss:Pattern="Solid"/></Style></Styles>';
+  xml += '<Worksheet ss:Name="Customers"><Table>';
+  rows.forEach(function(row, ri) {
+    xml += '<Row>';
+    row.forEach(function(v) {
+      const isNum = ri>0 && v!=='' && v!==null && !isNaN(parseFloat(v)) && isFinite(v);
+      const safe = String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      xml += isNum
+        ? '<Cell><Data ss:Type="Number">'+parseFloat(v)+'</Data></Cell>'
+        : '<Cell'+(ri===0?' ss:StyleID="h"':'')+'><Data ss:Type="String">'+safe+'</Data></Cell>';
+    });
+    xml += '</Row>';
+  });
+  xml += '</Table></Worksheet></Workbook>';
 
-  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const blob = new Blob([xml], {type:'application/vnd.ms-excel'});
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
-  a.download = 'GaavnFresh_Customers_'+TODAY_KEY+'.csv';
+  a.download = 'GaavnFresh_Customers_'+TODAY_KEY+'.xls';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
