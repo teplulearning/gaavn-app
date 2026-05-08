@@ -1950,8 +1950,11 @@ function orderBodyHTML(o) {
         : '₹'+(item.amount||0).toLocaleString('en-IN');
       html += `<div class="order-item-row">
         <div><div class="item-name">${item.name}${changed?' <span style="color:var(--red);font-size:10px;">MODIFIED</span>':''}${isLaadiItem&&!confirmedWt?'<span style="font-size:10px;color:#E65100;margin-left:4px;">⚖️ '+(estWt?'est.':'pending')+'</span>':''}</div>
-        <div class="item-detail">${item.qty} ladi${item.qty>1?'s':''} · ₹${item.rate}/kg${weightInfo}</div>
-        ${changed?`<div style="font-size:10px;color:var(--muted);text-decoration:line-through;">${orig.qty} ladi × ₹${orig.rate}/kg</div>`:''}</div>
+        <div class="item-detail">${isLaadiItem
+          ? item.qty+' ladi'+(item.qty>1?'s':'')+' · ₹'+item.rate+'/kg'+weightInfo
+          : item.qty+' '+(item.unit||'kg')+' · ₹'+item.rate+'/'+(item.unit||'kg')+weightInfo
+        }</div>
+        ${changed?`<div style="font-size:10px;color:var(--muted);text-decoration:line-through;">${orig.qty} ${isLaadiItem?'ladi':item.unit||'kg'} × ₹${orig.rate}/${isLaadiItem?'kg':item.unit||'kg'}</div>`:''}</div>
         <div class="item-amt">${amtDisplay}</div>
       </div>`;
     }
