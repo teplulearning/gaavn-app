@@ -953,7 +953,7 @@ const PRODUCTS = [
   {id:'pl',     name:'Paneer Laadi',  unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true},
   {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70},
   {id:'lp',     name:'Lite Paneer',   unit:'kg',   stdRate:240, emoji:'🥗'},
-  {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛'},
+  {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:270, jarToKg:1},
   {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙'},
   {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦'},
   {id:'cmk',    name:'CM Khoya',      unit:'kg',   stdRate:234, emoji:'🍫'},
@@ -1953,7 +1953,7 @@ function orderBodyHTML(o) {
         <div><div class="item-name">${item.name}${changed?' <span style="color:var(--red);font-size:10px;">MODIFIED</span>':''}${isLaadiItem&&!confirmedWt?'<span style="font-size:10px;color:#E65100;margin-left:4px;">⚖️ '+(estWt?'est.':'pending')+'</span>':''}</div>
         <div class="item-detail">${isLaadiItem
           ? item.qty+' ladi'+(item.qty>1?'s':'')+' · ₹'+item.rate+'/kg'+weightInfo
-          : item.qty+' '+(item.unit||'kg')+' · ₹'+item.rate+'/'+(item.unit||'kg')+weightInfo
+          : item.qty+' '+(item.unit||'kg')+(item.unit==='jar'&&item.product==='lc'?' ('+item.qty+'kg)':'')+' · ₹'+item.rate+'/'+(item.unit||'kg')+weightInfo
         }</div>
         ${changed?`<div style="font-size:10px;color:var(--muted);text-decoration:line-through;">${orig.qty} ${isLaadiItem?'ladi':item.unit||'kg'} × ₹${orig.rate}/${isLaadiItem?'kg':item.unit||'kg'}</div>`:''}</div>
         <div class="item-amt">${amtDisplay}</div>
@@ -2236,11 +2236,8 @@ function initNewOrder() {
   if(STATE.sheetUrl && STATE.customers.length < 10) syncCustomersFromSheet();
   document.getElementById('step-customer').style.display = 'block';
   document.getElementById('step-products').style.display = 'none';
-  // Pre-fill search with last-added customer name if coming from Add Customer
-  const prefill = STATE._lastAddedCustomer || '';
-  document.getElementById('cust-search').value = prefill;
+  document.getElementById('cust-search').value = '';
   document.getElementById('cust-results').innerHTML = '';
-  if(prefill) { searchCustomers(prefill); STATE._lastAddedCustomer = null; }
   // Set date picker to today
   const dp = document.getElementById('order-date-picker');
   if(dp) {
@@ -2271,30 +2268,7 @@ function onOrderDateChange(val) {
 
 function searchCustomers(q) {
   const el = document.getElementById('cust-results');
-  if(!q.trim()) {
-    // Show recently added customers (extras first) when search is blank
-    const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
-    const extraIds = new Set(extras.map(e=>e.id));
-    const recent = [
-      ...STATE.customers.filter(c=>extraIds.has(c.id)).slice(-10).reverse(),
-      ...STATE.customers.filter(c=>!extraIds.has(c.id)).slice(0,5)
-    ].slice(0,15);
-    if(!recent.length) { el.innerHTML=''; return; }
-    el.innerHTML = '<div style="padding:6px 12px 4px;font-size:10px;color:var(--muted);font-weight:700;letter-spacing:1px;">RECENTLY ADDED & FREQUENT</div>'
-      + recent.map(c => `
-      <div class="customer-row" onclick="selectCustomer('${c.id}')">
-        <div style="flex:1;min-width:0;">
-          <div class="cust-name">${c.name}</div>
-          ${c.phone?`<div style="font-size:12px;font-weight:600;color:var(--blue);margin-top:2px;">📞 ${c.phone}</div>`:''}
-          <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">
-            <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:${(CAT_BG[c.category]||'#eee')};color:${(CAT_COLOR[c.category]||'#888')};">${c.category||'—'}</span>
-            ${c.area?`<span style="font-size:11px;color:var(--muted);">📍 ${c.area}</span>`:''}
-          </div>
-        </div>
-        <span style="font-size:18px;flex-shrink:0;">→</span>
-      </div>`).join('');
-    return;
-  }
+  if(!q.trim()) { el.innerHTML=''; return; }
   const ql = q.toLowerCase();
   const matches = STATE.customers.filter(c =>
     c.name.toLowerCase().includes(ql) ||
@@ -2450,7 +2424,7 @@ function renderProductList() {
       +'</div>';
     }
 
-    // Malai Paneer unit toggle
+    // Unit toggle (Malai Paneer pack/kg, Lite Curd jar/kg)
     const unitToggle = p.altUnit
       ? ('<div style="display:flex;gap:4px;margin-top:4px;">'
           +'<button onclick="setMPUnit(\''+p.id+'\',\''+p.unit+'\')" style="padding:2px 8px;border-radius:12px;border:1.5px solid var(--border);font-size:10px;font-weight:600;cursor:pointer;background:'+(curUnit===p.unit?'var(--amber)':'var(--surface)')+';color:'+(curUnit===p.unit?'#fff':'var(--muted)')+';">'+p.unit+'</button>'
@@ -2501,10 +2475,14 @@ function setMPUnit(pid, unit) {
   if(!p) return;
   if(!STATE.cart[pid]) STATE.cart[pid]={qty:0,rate:getRate(pid),unit:p.unit};
   STATE.cart[pid].unit = unit;
-  // Switch default rate if switching unit
+  // Switch rate based on unit
   const cust = STATE.selectedCustomer;
-  if(unit===p.altUnit) STATE.cart[pid].rate = cust?.pricing?.[pid+'_pack']||p.altRate||p.stdRate;
-  else STATE.cart[pid].rate = getRate(pid);
+  if(unit===p.altUnit) {
+    // kg unit for Lite Curd: use lc_kg custom rate if set, else same as jar rate
+    STATE.cart[pid].rate = cust?.pricing?.[pid+'_kg'] || cust?.pricing?.[pid+'_pack'] || p.altRate || getRate(pid);
+  } else {
+    STATE.cart[pid].rate = getRate(pid);
+  }
   renderProductList();
 }
 
@@ -3146,13 +3124,11 @@ function saveNewCustomer() {
   extras.push(customer);
   localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
   closeModal('modal-add-customer');
-  showToast('✓ Customer added: '+name+' — tap "New Order" to select them');
+  showToast('✓ Customer added: '+name);
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
   if(STATE.sheetUrl) syncCustomerToSheet(customer);
-  // Store last-added customer name so New Order screen can pre-fill on open
-  STATE._lastAddedCustomer = name;
-  // If New Order screen is already open, auto-search immediately
+  // If New Order screen is active, auto-search the new customer name
   const custSearch = document.getElementById('cust-search');
   if(custSearch && document.getElementById('screen-new-order')?.classList.contains('active')) {
     custSearch.value = name;
