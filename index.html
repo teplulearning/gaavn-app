@@ -963,6 +963,8 @@ const PRODUCTS = [
   {id:'sl',     name:'Sweet Lassi',   unit:'cup',  stdRate:23,  emoji:'🥤'},
   {id:'ml',     name:'Mango Lassi',   unit:'cup',  stdRate:23,  emoji:'🥭'},
   {id:'mixl',   name:'Mixed Lassi',   unit:'cup',  stdRate:23,  emoji:'🍹'},
+  {id:'shrk',   name:'Shrikhand',     unit:'kg',   stdRate:320, emoji:'🍮'},
+  {id:'amrk',   name:'Amrakhand',     unit:'kg',   stdRate:340, emoji:'🥭'},
 ];
 
 // ── CUSTOMERS MASTER LIST ───────────────────────────────────────────
@@ -2041,6 +2043,8 @@ function refreshDeliveryTotal(orderId) {
   });
   const tEl = document.getElementById('dtotal-'+orderId);
   if(tEl) tEl.textContent = '₹'+total.toLocaleString('en-IN');
+  // Also update day-total banners live
+  _updateDayTotalBanners();
 }
 
 // Recalculate laadi amounts as weights are entered
@@ -2074,6 +2078,28 @@ function refreshLaadiTotal(orderId, itemIdx) {
   o.total = newTotal;
   const tEl = document.getElementById('dtotal-'+orderId);
   if(tEl) tEl.textContent = '₹'+newTotal.toLocaleString('en-IN');
+  // Persist immediately so My Orders day-total banner reflects confirmed weight
+  saveOrders();
+  // Refresh day-total banners live without full re-render
+  _updateDayTotalBanners();
+}
+
+function _updateDayTotalBanners() {
+  const byDate = {};
+  STATE.orders.forEach(o => {
+    const d = (o.date && o.date !== 'undefined') ? o.date : TODAY_KEY;
+    if (!byDate[d]) byDate[d] = 0;
+    byDate[d] += (o.total || 0);
+  });
+  Object.entries(byDate).forEach(([d, total]) => {
+    const el = document.getElementById('daytotal-' + d);
+    if (el) el.textContent = '₹' + total.toLocaleString('en-IN');
+  });
+  const grandEl = document.getElementById('orders-grand-total');
+  if (grandEl) {
+    const grand = STATE.orders.reduce((s,o)=>s+(o.total||0),0);
+    grandEl.textContent = '₹' + grand.toLocaleString('en-IN');
+  }
 }
 
 // Inline mark delivered (no modal needed — uses qty inputs already visible)
@@ -2188,7 +2214,7 @@ function renderOrdersList() {
     html += '<div style="background:var(--amber);border-radius:10px;padding:10px 14px;'
       +'margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">'
       +'<span style="font-size:13px;font-weight:700;color:#fff;">📦 '+totalOrders+' orders'+scrollHint+'</span>'
-      +'<span style="font-size:13px;font-weight:700;color:#fff;">₹'+totalValue.toLocaleString('en-IN')+'</span>'
+      +'<span style="font-size:13px;font-weight:700;color:#fff;" id="orders-grand-total">₹'+totalValue.toLocaleString('en-IN')+'</span>'
       +'</div>';
   }
   dates.forEach(d => {
@@ -2203,7 +2229,7 @@ function renderOrdersList() {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;'
       +'margin:14px 0 6px;padding:6px 10px;background:var(--ink);border-radius:8px;">'
       +'<span style="font-size:12px;font-weight:700;color:var(--cream);">📅 '+dateLabel+'</span>'
-      +'<span style="font-size:12px;font-weight:700;color:var(--amber);">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
+      +'<span style="font-size:12px;font-weight:700;color:var(--amber);" id="daytotal-'+d+'">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
       +'</div>';
     html += dayOrders.map(o=>orderCardHTML(o)).join('');
   });
