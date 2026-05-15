@@ -963,8 +963,6 @@ const PRODUCTS = [
   {id:'sl',     name:'Sweet Lassi',   unit:'cup',  stdRate:23,  emoji:'🥤'},
   {id:'ml',     name:'Mango Lassi',   unit:'cup',  stdRate:23,  emoji:'🥭'},
   {id:'mixl',   name:'Mixed Lassi',   unit:'cup',  stdRate:23,  emoji:'🍹'},
-  {id:'shrk',   name:'Shrikhand',     unit:'kg',   stdRate:320, emoji:'🍮'},
-  {id:'amrk',   name:'Amrakhand',     unit:'kg',   stdRate:340, emoji:'🥭'},
 ];
 
 // ── CUSTOMERS MASTER LIST ───────────────────────────────────────────
@@ -1702,18 +1700,6 @@ function showScreen(id) {
 
 // ── INIT ─────────────────────────────────────────────────────────────
 function initApp() {
-  // ── Load Sheet URL FIRST — everything else depends on it ──────────
-  // Check URL params first (allows pre-configuration via shared link)
-  const _urlParams = new URLSearchParams(window.location.search);
-  const _paramUrl  = _urlParams.get('sheetUrl') || _urlParams.get('sheet');
-  if(_paramUrl && _paramUrl.startsWith('https://script.google.com')) {
-    localStorage.setItem(LS_URL, _paramUrl);
-    STATE.sheetUrl = _paramUrl;
-  } else {
-    STATE.sheetUrl = localStorage.getItem(LS_URL) || '';
-  }
-  updateSheetDot();
-
   // Load customers: master + any extras stored locally
   STATE.customers = CUSTOMERS_MASTER.map(c => ({...c}));
   const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
@@ -1739,7 +1725,18 @@ function initApp() {
   if(STATE.orders.length === 0 && STATE.sheetUrl) {
     setTimeout(syncOrdersFromSheet, 1000);
   }
-  // Sheet URL already loaded at top of initApp — no duplicate needed here
+  // Load saved sheet URL — check URL params first (allows pre-configuration via link)
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
+  if(paramUrl && paramUrl.startsWith('https://script.google.com')) {
+    // Save to localStorage so future sessions remember it
+    localStorage.setItem(LS_URL, paramUrl);
+    STATE.sheetUrl = paramUrl;
+    console.log('Sheet URL loaded from URL param and saved');
+  } else {
+    STATE.sheetUrl = localStorage.getItem(LS_URL)||'';
+  }
+  updateSheetDot();
   showScreen('home');
   // Add delivery-specific setup section
   setTimeout(renderSetupExtra, 200);
@@ -2044,8 +2041,6 @@ function refreshDeliveryTotal(orderId) {
   });
   const tEl = document.getElementById('dtotal-'+orderId);
   if(tEl) tEl.textContent = '₹'+total.toLocaleString('en-IN');
-  // Also update day-total banners live
-  _updateDayTotalBanners();
 }
 
 // Recalculate laadi amounts as weights are entered
@@ -2079,28 +2074,6 @@ function refreshLaadiTotal(orderId, itemIdx) {
   o.total = newTotal;
   const tEl = document.getElementById('dtotal-'+orderId);
   if(tEl) tEl.textContent = '₹'+newTotal.toLocaleString('en-IN');
-  // Persist immediately so My Orders day-total banner reflects confirmed weight
-  saveOrders();
-  // Refresh day-total banners live without full re-render
-  _updateDayTotalBanners();
-}
-
-function _updateDayTotalBanners() {
-  const byDate = {};
-  STATE.orders.forEach(o => {
-    const d = (o.date && o.date !== 'undefined') ? o.date : TODAY_KEY;
-    if (!byDate[d]) byDate[d] = 0;
-    byDate[d] += (o.total || 0);
-  });
-  Object.entries(byDate).forEach(([d, total]) => {
-    const el = document.getElementById('daytotal-' + d);
-    if (el) el.textContent = '₹' + total.toLocaleString('en-IN');
-  });
-  const grandEl = document.getElementById('orders-grand-total');
-  if (grandEl) {
-    const grand = STATE.orders.reduce((s,o)=>s+(o.total||0),0);
-    grandEl.textContent = '₹' + grand.toLocaleString('en-IN');
-  }
 }
 
 // Inline mark delivered (no modal needed — uses qty inputs already visible)
@@ -2215,7 +2188,7 @@ function renderOrdersList() {
     html += '<div style="background:var(--amber);border-radius:10px;padding:10px 14px;'
       +'margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">'
       +'<span style="font-size:13px;font-weight:700;color:#fff;">📦 '+totalOrders+' orders'+scrollHint+'</span>'
-      +'<span style="font-size:13px;font-weight:700;color:#fff;" id="orders-grand-total">₹'+totalValue.toLocaleString('en-IN')+'</span>'
+      +'<span style="font-size:13px;font-weight:700;color:#fff;">₹'+totalValue.toLocaleString('en-IN')+'</span>'
       +'</div>';
   }
   dates.forEach(d => {
@@ -2230,7 +2203,7 @@ function renderOrdersList() {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;'
       +'margin:14px 0 6px;padding:6px 10px;background:var(--ink);border-radius:8px;">'
       +'<span style="font-size:12px;font-weight:700;color:var(--cream);">📅 '+dateLabel+'</span>'
-      +'<span style="font-size:12px;font-weight:700;color:var(--amber);" id="daytotal-'+d+'">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
+      +'<span style="font-size:12px;font-weight:700;color:var(--amber);">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
       +'</div>';
     html += dayOrders.map(o=>orderCardHTML(o)).join('');
   });
@@ -3419,20 +3392,32 @@ async function syncCustomersFromSheet() {
     const json = await res.json();
     if(!json.customers || !json.customers.length) return;
     const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
-    let added = 0;
+    let added = 0, updated = 0;
     json.customers.forEach(function(c) {
       if(!c.id || !c.name) return;
-      const existsInState = STATE.customers.find(x => x.id===c.id || x.name.toLowerCase()===c.name.toLowerCase());
-      if(!existsInState) {
+      const idx = STATE.customers.findIndex(x => x.id===c.id || x.name.toLowerCase()===c.name.toLowerCase());
+      if(idx >= 0) {
+        // Always merge pricing, balance and phone from sheet into existing customer
+        const existing = STATE.customers[idx];
+        if(c.pricing && Object.keys(c.pricing).length > 0) {
+          existing.pricing = Object.assign({}, existing.pricing||{}, c.pricing);
+        }
+        if(c.balance !== undefined) existing.balance = c.balance;
+        if(c.phone)    existing.phone    = c.phone;
+        if(c.area)     existing.area     = c.area;
+        if(c.category) existing.category = c.category;
+        // Also update in extras (localStorage)
+        const extIdx = extras.findIndex(x => x.id===c.id || x.name.toLowerCase()===c.name.toLowerCase());
+        if(extIdx >= 0) extras[extIdx] = {...extras[extIdx], ...existing};
+        updated++;
+      } else {
         STATE.customers.push(c);
         extras.push(c);
         added++;
       }
     });
-    if(added > 0) {
-      localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
-      showToast('✓ '+added+' new customer(s) synced');
-    }
+    localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+    if(added > 0) showToast('✓ '+added+' new customer(s) synced from sheet');
   } catch(e) {
     console.warn('Customer sync from sheet failed:', e);
   }
@@ -3993,9 +3978,17 @@ function getAppsScriptCode() {
     '  var customers=data.slice(1).map(function(row){',
     '    var obj={};',
     '    headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
+    '    var pricing={};',
+    '    try{ if(obj["Pricing"]) pricing=JSON.parse(String(obj["Pricing"])); }catch(ex){}',
+    '    // Also read individual product rate columns if present (e.g. "Paneer Rate")',
+    '    var prodCols=["paneer","mp","lp","lc","ghee","cream","cmk","stk","ch","ch500","sl","ml","mixl","shrk","amrk","pl"];',
+    '    prodCols.forEach(function(pid){',
+    '      var colKey=pid+"_rate";',
+    '      if(obj[colKey]&&parseFloat(obj[colKey])>0) pricing[pid]=parseFloat(obj[colKey]);',
+    '    });',
     '    return {id:String(obj["ID"]),name:String(obj["Name"]),category:String(obj["Category"]||"Retail"),',
     '      phone:String(obj["Phone"]||""),area:String(obj["Area"]||""),address:String(obj["Address"]||""),',
-    '      balance:parseFloat(obj["Balance"])||0};',
+    '      balance:parseFloat(obj["Balance"])||0,pricing:pricing};',
     '  }).filter(function(c){return c.id&&c.name;});',
     '  return jsonOut({customers:customers});',
     '}',
@@ -4813,16 +4806,8 @@ async function fetchHistoryDate() {
   statusEl.style.color = 'var(--muted)';
 
   try {
-    let res, data;
-    try {
-      res = await fetch(url + '?action=getOrders&date=' + date, {cache:'no-store'});
-      data = await res.json();
-    } catch(corsErr) {
-      // CORS or network error — show specific message
-      statusEl.textContent = '✗ Connection failed — ensure the Apps Script is deployed as "Anyone" can access';
-      statusEl.style.color = 'var(--red,#C62828)';
-      return;
-    }
+    const res = await fetch(url + '?action=getOrders&date=' + date, {cache:'no-store'});
+    const data = await res.json();
     const rawOrders = data.orders || [];
 
     if(!rawOrders.length) {
@@ -5008,9 +4993,7 @@ function resetSequence() {
 async function submitAllDayOrders() {
   // Bulk re-sync ALL of today's orders to the sheet (overwrites existing rows)
   // This is the reliable way to ensure sheet is up to date
-  const _url = getSheetUrl();
-  if(!_url) { showToast('No Sheet URL — go to Setup'); showScreen('setup'); return; }
-  if(!STATE.sheetUrl) STATE.sheetUrl = _url; // ensure STATE is in sync
+  if(!STATE.sheetUrl) { showToast('No Sheet URL — go to Setup'); return; }
 
   const btn = document.getElementById('btn-submit-all');
   if(btn) { btn.textContent = '⏳ Submitting...'; btn.disabled = true; }
