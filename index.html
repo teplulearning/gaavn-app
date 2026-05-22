@@ -2216,7 +2216,10 @@ function renderOrdersList() {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;'
       +'margin:14px 0 6px;padding:6px 10px;background:var(--ink);border-radius:8px;">'
       +'<span style="font-size:12px;font-weight:700;color:var(--cream);">📅 '+dateLabel+'</span>'
-      +'<span style="font-size:12px;font-weight:700;color:var(--amber);">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
+      +'<div style="display:flex;align-items:center;gap:6px;">'
+      +'<span id="daytotal-'+d+'" style="font-size:12px;font-weight:700;color:var(--amber);">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
+      +'<button onclick="copyWhatsAppForDate(\''+d+'\')" style="background:#25D366;color:#fff;border:none;border-radius:6px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'DM Sans\',sans-serif;">💬</button>'
+      +'</div>'
       +'</div>';
     html += dayOrders.map(o=>orderCardHTML(o)).join('');
   });
@@ -4340,11 +4343,22 @@ function getDeliverySequence() {
 function copyWhatsAppForDate(dateKey) {
   // Build WA message for any date (history or today)
   const isToday = dateKey === TODAY_KEY;
-  const orders = isToday
-    ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]')
-    : getOrdersForDate(dateKey);
 
-  if (!orders.length) { showToast('No orders found for this date'); return; }
+  let orders = [];
+  if (isToday) {
+    orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === TODAY_KEY);
+    if (!orders.length) orders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+  } else {
+    // Past date: check STATE.orders first (loaded from sheet into memory when user synced)
+    orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === dateKey);
+    // Fallback: per-date localStorage cache
+    if (!orders.length) orders = getOrdersForDate(dateKey);
+  }
+
+  if (!orders.length) {
+    showToast('No orders found — tap Sync to load past orders first');
+    return;
+  }
 
   // Format date label
   const d = new Date(dateKey + 'T00:00:00');
