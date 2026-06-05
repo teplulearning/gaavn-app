@@ -3892,6 +3892,8 @@ function getAppsScriptCode() {
     '    if (a === "updateCustomerPricing") return updateCustomerPricing(e.parameter);',
     '    if (a === "upsertCustomer")        return upsertCustomer(e.parameter);',
     '    if (a === "resubmitComment")       return addResubmitComment(e.parameter);',
+    '    if (a === "deleteDay")             return deleteDay(e.parameter);',
+    '    if (a === "rebuildDayTotal")       return rebuildDayTotal(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + a});',
     '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
@@ -4105,6 +4107,43 @@ function getAppsScriptCode() {
     '    });',
     '    Logger.log("Rebuilt totals for sheet: " + sh.getName() + " — dates: " + Object.keys(dates).join(", "));',
     '  });',
+    '}',
+    '',
+    '// ── DELETE ALL ROWS FOR A DATE (used before bulk resubmit) ─────────',
+    'function deleteDay(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate = String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") return jsonOut({error:"No date"});',
+    '  var shName = "Orders_" + getMonthTag(rawDate);',
+    '  var sh = ss.getSheetByName(shName);',
+    '  if(!sh) return jsonOut({status:"ok", deleted:0, note:"sheet not found"});',
+    '  var data = sh.getDataRange().getValues();',
+    '  var deleted = 0;',
+    '  // Scan bottom-up so row deletions do not shift indices',
+    '  for(var r = data.length - 1; r >= 1; r--) {',
+    '    var rowId   = String(data[r][0]||"").trim();',
+    '    var rowDate = normDateCell(data[r][1], Session.getScriptTimeZone());',
+    '    // Delete if it is a data row OR a TOTAL row for this date',
+    '    var isTotalForDate = rowId === "TOTAL:" + rawDate || rowId === "RESUBMIT:" + rawDate;',
+    '    var isDataForDate  = rowDate === rawDate && rowId.indexOf("TOTAL:") !== 0 && rowId.indexOf("RESUBMIT:") !== 0;',
+    '    if(isTotalForDate || isDataForDate) {',
+    '      sh.deleteRow(r + 1);',
+    '      deleted++;',
+    '    }',
+    '  }',
+    '  return jsonOut({status:"ok", deleted:deleted, date:rawDate});',
+    '}',
+    '',
+    '// ── REBUILD DAY TOTAL FOR ONE DATE (called after bulk resubmit) ────',
+    'function rebuildDayTotal(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate = String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") return jsonOut({error:"No date"});',
+    '  var shName = "Orders_" + getMonthTag(rawDate);',
+    '  var sh = ss.getSheetByName(shName);',
+    '  if(!sh) return jsonOut({status:"ok", note:"sheet not found"});',
+    '  updateDayTotals(sh, rawDate);',
+    '  return jsonOut({status:"ok", date:rawDate});',
     '}',
     '',
     '// ── RESUBMIT COMMENT — adds audit trail row after a day resubmission ──',
@@ -5592,34 +5631,60 @@ async function doResubmitDay() {
 
   if(!orders.length) { showToast('No local orders found for this date'); return; }
 
-  // Disable button, show progress
   const btn = document.getElementById('btn-do-resubmit');
   btn.disabled = true; btn.textContent = '⏳ Resubmitting...';
   document.getElementById('resubmit-day-progress').style.display = 'block';
   document.getElementById('resubmit-day-result').style.display = 'none';
-  document.getElementById('resubmit-day-btns').style.display = 'flex';
 
   const bar  = document.getElementById('resubmit-progress-bar');
   const text = document.getElementById('resubmit-progress-text');
 
+  // STEP 1: Delete all existing rows for this date first
+  text.textContent = 'Step 1/3 — Clearing old rows from sheet...';
+  bar.style.width = '5%';
+  try {
+    const delParams = new URLSearchParams({ action: 'deleteDay', date: date });
+    const delRes = await fetch(url + '?' + delParams.toString());
+    const delJson = await delRes.json();
+    text.textContent = 'Step 1/3 — Cleared ' + (delJson.deleted||0) + ' old rows \u2713';
+  } catch(e) {
+    text.textContent = 'Step 1/3 — Could not clear old rows (will overwrite)';
+  }
+  bar.style.width = '15%';
+  await new Promise(r => setTimeout(r, 600));
+
+  // STEP 2: Resubmit each order sequentially
   let done = 0, failed = 0;
   for(const o of orders) {
     try {
       await syncOneOrder(o.id, o);
       done++;
     } catch(e) { failed++; }
-    const pct = Math.round((done + failed) / orders.length * 100);
-    bar.style.width  = pct + '%';
-    text.textContent = `${done + failed} of ${orders.length} orders...`;
-    await new Promise(r => setTimeout(r, 80)); // small delay to not overwhelm Apps Script
+    const pct = 15 + Math.round((done + failed) / orders.length * 70);
+    bar.style.width = pct + '%';
+    text.textContent = 'Step 2/3 — ' + (done + failed) + ' of ' + orders.length + ' orders submitted...';
+    await new Promise(r => setTimeout(r, 150));
   }
+  bar.style.width = '88%';
+  await new Promise(r => setTimeout(r, 500));
 
-  // Post a resubmission comment row to the sheet
+  // STEP 3: Rebuild the day total row
+  text.textContent = 'Step 3/3 — Rebuilding day total...';
+  try {
+    const totParams = new URLSearchParams({ action: 'rebuildDayTotal', date: date });
+    await fetch(url + '?' + totParams.toString());
+    text.textContent = 'Step 3/3 — Day total rebuilt \u2713';
+  } catch(e) {
+    text.textContent = 'Step 3/3 — Total rebuild failed (run rebuildAllDayTotals in Apps Script)';
+  }
+  bar.style.width = '95%';
+  await new Promise(r => setTimeout(r, 400));
+
+  // Post resubmit comment
   try {
     const now = new Date().toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
     const params = new URLSearchParams({
-      action: 'resubmitComment',
-      date: date,
+      action: 'resubmitComment', date: date,
       orderCount: orders.length,
       submittedBy: STATE.role || 'owner',
       submittedAt: now,
@@ -5627,20 +5692,21 @@ async function doResubmitDay() {
     await fireAndForget(url + '?' + params.toString());
   } catch(e) {}
 
-  // Show result
+  bar.style.width = '100%';
   const resultEl = document.getElementById('resubmit-day-result');
   if(failed === 0) {
     resultEl.style.background = '#E8F5E9'; resultEl.style.color = '#2A7A45';
-    resultEl.textContent = `✓ All ${done} orders resubmitted successfully — sheet updated.`;
+    resultEl.textContent = '\u2713 All ' + done + ' orders resubmitted \u2014 old rows cleared, day total rebuilt.';
   } else {
     resultEl.style.background = '#FFF8E1'; resultEl.style.color = '#E65100';
-    resultEl.textContent = `⚠ ${done} resubmitted, ${failed} failed — check connection and retry.`;
+    resultEl.textContent = '\u26a0 ' + done + ' ok, ' + failed + ' failed \u2014 retry for the failed ones.';
   }
   resultEl.style.display = 'block';
   document.getElementById('resubmit-day-progress').style.display = 'none';
-  btn.textContent = '✓ Done';
-  showToast(failed===0 ? `✓ ${done} orders resubmitted` : `⚠ ${done} ok, ${failed} failed`);
+  btn.textContent = '\u2713 Done';
+  showToast(failed===0 ? '\u2713 ' + done + ' orders resubmitted cleanly' : '\u26a0 ' + done + ' ok, ' + failed + ' failed');
 }
+
 
 function loadAllPastOrders() {
   // Load ALL orders from all date keys for sales/owner role
