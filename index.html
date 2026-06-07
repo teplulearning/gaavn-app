@@ -2079,6 +2079,10 @@ function orderBodyHTML(o) {
   }
   if(STATE.role==='owner') {
     html += `<button class="btn btn-blue btn-sm" onclick="syncOneOrder('${o.id}')">📤 Sync</button>`;
+    html += `<button class="btn btn-danger btn-sm" style="margin-top:6px;" onclick="confirmDeleteOrder('${o.id}','${o.date||TODAY_KEY}')">🗑 Delete Order</button>`;
+  }
+  if(STATE.role==='sales' && (o.status==='confirmed'||o.status==='draft')) {
+    html += `<button class="btn btn-danger btn-sm" style="margin-top:6px;" onclick="confirmDeleteOrder('${o.id}','${o.date||TODAY_KEY}')">🗑 Delete Order</button>`;
   }
 
   html += '</div>';
@@ -2804,29 +2808,73 @@ async function syncCustomerPricingToSheet(customer) {
 
 // ── MODIFY ORDER ─────────────────────────────────────────────────────
 // openEditOrder is called from order cards for sales/owner role
-function deleteOrderFromHistory(orderId, orderDate) {
-  if(!confirm('Delete this order? This cannot be undone.')) return;
+function confirmDeleteOrder(orderId, orderDate) {
+  const o = STATE.orders.find(x=>x.id===orderId) ||
+    (() => {
+      for(let i=0;i<localStorage.length;i++){
+        const k=localStorage.key(i);
+        if(!k||!k.startsWith(LS_PREFIX)) continue;
+        try{ const found=JSON.parse(localStorage.getItem(k)||'[]').find(x=>x.id===orderId); if(found) return found; }catch(e){}
+      }
+    })();
+  if(!o) { showToast('Order not found'); return; }
 
-  // Remove from STATE.orders
+  // Build confirmation modal
+  document.getElementById('modal-order-title').textContent = '🗑 Delete Order?';
+  document.getElementById('modal-order-content').innerHTML = `
+    <div style="background:var(--rl,#FEE2E2);border:1.5px solid var(--red);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+      <div style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px;">This cannot be undone</div>
+      <div style="font-size:13px;color:var(--ink);">${o.customerName} · ₹${(o.total||0).toLocaleString('en-IN')}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px;">${o.date||orderDate} · ${(o.items||[]).map(i=>i.name).join(', ')}</div>
+    </div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+      The order will be deleted from this device. If it was already synced to the Google Sheet, it will also be removed from the sheet.
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="closeModal('modal-order')">Cancel</button>
+      <button class="btn btn-danger" onclick="executeDeleteOrder('${orderId}','${orderDate||o.date||TODAY_KEY}')">🗑 Yes, Delete</button>
+    </div>`;
+  document.getElementById('modal-order').classList.add('open');
+}
+
+async function executeDeleteOrder(orderId, orderDate) {
+  closeModal('modal-order');
+
+  // 1. Remove from STATE.orders
   STATE.orders = STATE.orders.filter(o => o.id !== orderId);
 
-  // Remove from localStorage for that date
+  // 2. Remove from localStorage for that date
   const dateKey = LS_PREFIX + (orderDate || TODAY_KEY);
   try {
     const stored = JSON.parse(localStorage.getItem(dateKey)||'[]');
     const filtered = stored.filter(o => o.id !== orderId);
     localStorage.setItem(dateKey, JSON.stringify(filtered));
-    // Also update LS_ORDERS if it's today
-    if(orderDate === TODAY_KEY) {
-      localStorage.setItem(LS_ORDERS, JSON.stringify(filtered));
-    }
+    if(orderDate === TODAY_KEY) localStorage.setItem(LS_ORDERS, JSON.stringify(filtered));
   } catch(e) {}
 
-  // Refresh UI
+  // 3. Delete from Google Sheet if URL is set
+  const url = getSheetUrl();
+  if(url) {
+    try {
+      const params = new URLSearchParams({ action: 'deleteOrder', orderId, date: orderDate||TODAY_KEY });
+      await fetch(url + '?' + params.toString());
+    } catch(e) {}
+    // Rebuild day total after deletion
+    try {
+      const params = new URLSearchParams({ action: 'rebuildDayTotal', date: orderDate||TODAY_KEY });
+      await fetch(url + '?' + params.toString());
+    } catch(e) {}
+  }
+
+  // 4. Refresh UI
   renderHistory();
   renderOrdersList();
   renderDashboard();
-  showToast('Order deleted');
+  showToast('✓ Order deleted');
+}
+
+function deleteOrderFromHistory(orderId, orderDate) {
+  confirmDeleteOrder(orderId, orderDate);
 }
 
 function openEditOrder(orderId) {
@@ -3902,6 +3950,7 @@ function getAppsScriptCode() {
     '    if (a === "resubmitComment")       return addResubmitComment(e.parameter);',
     '    if (a === "deleteDay")             return deleteDay(e.parameter);',
     '    if (a === "rebuildDayTotal")       return rebuildDayTotal(e.parameter);',
+    '    if (a === "deleteOrder")           return deleteOrder(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + a});',
     '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
@@ -4035,7 +4084,7 @@ function getAppsScriptCode() {
     '    // Bold the amount column',
     '    sh.getRange(nr,14,1,1).setFontWeight("bold");',
     '  });',
-    '  sortSheetAndRebuild(sh, rawDate);',
+    '  updateDayTotals(sh, rawDate);',
     '  return jsonOut({status:"ok", row:firstRow, items:items.length});',
     '}',
     '',
@@ -4069,10 +4118,10 @@ function getAppsScriptCode() {
     '  // Step 3: Write sorted data back (header row stays, overwrite data rows)',
     '  var totalRows = dataRows.length;',
     '  var numCols = header.length;',
-    '  // Clear everything below header first',
     '  var lastRow = sh.getLastRow();',
-    '  if(lastRow > 1) sh.getRange(2, 1, lastRow - 1, numCols).clearContent().clearFormat();',
-    '  // Write sorted data rows',
+    '  // Delete rows beyond what we need (bottom-up to avoid index shift)',
+    '  for(var d = lastRow; d > totalRows + 1; d--) { sh.deleteRow(d); }',
+    '  // Write sorted data rows (overwrite in place — no clearFormat)',
     '  sh.getRange(2, 1, totalRows, numCols).setValues(dataRows);',
     '  // Step 4: Reapply row colors based on status column (col F = index 5)',
     '  for(var i = 0; i < dataRows.length; i++) {',
@@ -4160,6 +4209,28 @@ function getAppsScriptCode() {
     '    sortSheetAndRebuild(sh, null);',
     '    Logger.log("Sorted and rebuilt: " + sh.getName());',
     '  });',
+    '}',
+    '',
+    '// ── DELETE A SINGLE ORDER BY ID ─────────────────────────────────────',
+    'function deleteOrder(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate = String(p.date||"").trim();',
+    '  var orderId = String(p.orderId||"").trim();',
+    '  if(!orderId) return jsonOut({error:"No orderId"});',
+    '  if(!rawDate||rawDate==="undefined") rawDate = Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName = "Orders_" + getMonthTag(rawDate);',
+    '  var sh = ss.getSheetByName(shName);',
+    '  if(!sh) return jsonOut({status:"ok", deleted:0, note:"sheet not found"});',
+    '  var data = sh.getDataRange().getValues();',
+    '  var deleted = 0;',
+    '  // Scan bottom-up so row deletions do not shift indices',
+    '  for(var r = data.length - 1; r >= 1; r--) {',
+    '    if(String(data[r][0]).trim() === orderId) {',
+    '      sh.deleteRow(r + 1);',
+    '      deleted++;',
+    '    }',
+    '  }',
+    '  return jsonOut({status:"ok", deleted:deleted, orderId:orderId});',
     '}',
     '',
     '// ── DELETE ALL ROWS FOR A DATE (used before bulk resubmit) ─────────',
