@@ -545,17 +545,23 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   <div class="screen" id="screen-history">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div class="page-title">Order History</div>
-      <button id="hist-fetch-btn" onclick="openHistoryFetch()"
-        style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">
-        ☁ Load from Sheet
-      </button>
+      <div style="display:flex;gap:6px;">
+        <button onclick="openGSTExport()"
+          style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;">
+          📊 GST Report
+        </button>
+        <button id="hist-fetch-btn" onclick="openHistoryFetch()"
+          style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;">
+          ☁ Sheet
+        </button>
+      </div>
     </div>
     <div class="page-sub">Past orders by date — tap a date to view</div>
 
     <!-- Date filter row -->
     <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;">
       <input type="date" id="hist-date-filter"
-        style="flex:1;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);"
+        style="flex:1;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--ink);"
         onchange="renderHistory()">
       <button onclick="document.getElementById('hist-date-filter').value='';renderHistory();"
         style="background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;color:var(--muted);">
@@ -568,6 +574,33 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 
     <!-- Date groups list -->
     <div id="hist-list"></div>
+  </div>
+
+  <!-- GST EXPORT MODAL -->
+  <div class="modal-overlay" id="modal-gst-export">
+    <div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">
+      <div class="modal-handle"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div class="modal-title" style="margin-bottom:0;">📊 GST Report Export</div>
+        <button onclick="closeModal('modal-gst-export')" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);">✕</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Select date range for the GST report to send to your CA.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">FROM DATE</div>
+          <input type="date" id="gst-from" onchange="previewGSTReport()" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--ink);">
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">TO DATE</div>
+          <input type="date" id="gst-to" onchange="previewGSTReport()" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--ink);">
+        </div>
+      </div>
+      <div id="gst-preview" style="margin-bottom:14px;"></div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button class="btn btn-success" onclick="generateGSTReport('csv')">⬇ Download CSV (for CA)</button>
+        <button class="btn btn-secondary" onclick="closeModal('modal-gst-export')">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <!-- HISTORY FETCH MODAL (load a specific date from Sheet) -->
@@ -4017,14 +4050,13 @@ function getAppsScriptCode() {
     '  return ss.getSheetByName(name) || ss.insertSheet(name);',
     '}',
     '',
-    '// ── LOG ORDER ───────────────────────────────────────────────────────',
+    '// ── LOG ORDER (append-only — fast, safe, no sheet corruption) ────────',
     'function logOrder(p) {',
     '  var ss = SpreadsheetApp.openById(SS_ID);',
     '  var rawDate = String(p.date||"").trim();',
     '  if(!rawDate||rawDate==="undefined") rawDate = Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
     '  var shName = "Orders_" + getMonthTag(rawDate);',
     '  var sh = getOrCreateSheet(ss, shName);',
-    '  // Headers: one row per item — order info repeated, then item details',
     '  var headers = [',
     '    "Order ID","Date","Customer","Category","Area","Status",',
     '    "Order Total (Rs)","Payment Mode","Payment Amt",',
@@ -4036,7 +4068,6 @@ function getAppsScriptCode() {
     '    var hRange = sh.getRange(1,1,1,headers.length);',
     '    hRange.setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#fff");',
     '    sh.setFrozenRows(1);',
-    '    // Set column widths',
     '    sh.setColumnWidth(3,180); sh.setColumnWidth(10,200);',
     '    sh.setColumnWidth(1,130); sh.setColumnWidth(2,100);',
     '  }',
@@ -4044,80 +4075,45 @@ function getAppsScriptCode() {
     '  try{items=JSON.parse(p.items||"[]");}catch(ex){}',
     '  if(items.length===0) items=[{name:"(no items)",qty:0,unit:"",rate:0,amount:0}];',
     '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
-    '  // Recalculate order total from items — this ensures Paneer Laadi confirmed',
-    '  // weight is included even if p.total was saved before weight was confirmed.',
-    '  // Use MAX of itemsTotal and sentTotal: itemsTotal wins when weights are confirmed,',
-    '  // sentTotal wins when items still have 0 amount (weight not yet confirmed).',
-    '  var itemsTotal = items.reduce(function(s,i){ return s + (parseFloat(i.amount)||0); }, 0);',
-    '  var sentTotal = parseFloat(p.total)||0;',
+    '  var itemsTotal = items.reduce(function(s,i){ return s+(parseFloat(i.amount)||0); },0);',
+    '  var sentTotal  = parseFloat(p.total)||0;',
     '  var orderTotal = Math.max(itemsTotal, sentTotal);',
-    '  var payMode=p.paymentMode||"";',
-    '  var payAmt=parseFloat(p.paymentAmount)||0;',
-    '  // Delete existing rows for this orderId first (handles edits)',
-    '  var data=sh.getDataRange().getValues();',
-    '  var rowsToDelete=[];',
-    '  for(var r=data.length-1;r>=1;r--) {',
-    '    var cell=String(data[r][0]||"").trim();',
-    '    if(cell===String(p.orderId)) rowsToDelete.push(r+1);',
-    '    if(cell.indexOf("TOTAL:")===0) continue;',
-    '  }',
-    '  rowsToDelete.forEach(function(rn){ sh.deleteRow(rn); });',
-    '  // Also check OTHER month sheets in case date was changed',
-    '  var allSheets=ss.getSheets();',
-    '  for(var s=0;s<allSheets.length;s++) {',
-    '    var shOther=allSheets[s];',
-    '    if(shOther.getName()===shName) continue;',
-    '    if(shOther.getName().indexOf("Orders_")!==0) continue;',
-    '    var dataOther=shOther.getDataRange().getValues();',
-    '    for(var r2=1;r2<dataOther.length;r2++) {',
-    '      if(String(dataOther[r2][0]).indexOf("TOTAL:")===0) continue;',
-    '      if(String(dataOther[r2][0])===String(p.orderId)) {',
-    '        // Found in old sheet — delete from there, add to new sheet',
-    '        shOther.deleteRow(r2+1);',
-    '        var oldDate=normDateCell(dataOther[r2][1],Session.getScriptTimeZone());',
-    '        updateDayTotals(shOther,oldDate);',
-    '        break;',
-    '      }',
-    '    }',
+    '  var payMode = p.paymentMode||"";',
+    '  var payAmt  = parseFloat(p.paymentAmount)||0;',
+    '  // Delete any existing rows for this orderId (handles re-sync/edits)',
+    '  // Scan bottom-up so deletions do not shift indices',
+    '  var data = sh.getDataRange().getValues();',
+    '  for(var r = data.length-1; r >= 1; r--) {',
+    '    var cell = String(data[r][0]||"").trim();',
+    '    if(cell === String(p.orderId)) sh.deleteRow(r+1);',
     '  }',
     '  // Append one row per item',
     '  var firstRow = -1;',
     '  items.forEach(function(item, idx) {',
-    '    var qty    = parseFloat(item.qty)||0;',
-    '    var rate   = parseFloat(item.rate)||0;',
-    '    var amt    = parseFloat(item.amount)||(qty*rate);',
-    '    var unit   = item.unit||"";',
-    '    var name   = item.name||"";',
-    '    // Repeat customer name and key fields on every item row',
+    '    var qty  = parseFloat(item.qty)||0;',
+    '    var rate = parseFloat(item.rate)||0;',
+    '    var amt  = parseFloat(item.amount)||(qty*rate);',
     '    var rowData = [',
-    '      p.orderId,',
-    '      rawDate,',
-    '      p.customerName,',
-    '      p.customerCategory||"",',
-    '      p.customerArea||"",',
-    '      p.status,',
+    '      p.orderId, rawDate, p.customerName,',
+    '      p.customerCategory||"", p.customerArea||"", p.status,',
     '      idx===0 ? orderTotal : "",',
-    '      idx===0 ? payMode : "",',
-    '      idx===0 ? payAmt : "",',
-    '      name, qty, unit, rate, amt,',
-    '      idx===0 ? (p.notes||"") : "",',
+    '      idx===0 ? payMode   : "",',
+    '      idx===0 ? payAmt    : "",',
+    '      item.name||"", qty, item.unit||"", rate, amt,',
+    '      idx===0 ? (p.notes||"")     : "",',
     '      idx===0 ? (p.createdBy||"") : "",',
     '      idx===0 ? now : ""',
     '    ];',
     '    sh.appendRow(rowData);',
     '    var nr = sh.getLastRow();',
-    '    if(firstRow===-1) firstRow=nr;',
-    '    // Color item rows: first row uses status color, continuation rows lighter',
-    '    if(idx===0) {',
-    '      applyRowColor(sh, nr, p.status);',
-    '    } else {',
-    '      sh.getRange(nr,1,1,headers.length).setBackground("#F9F9F9");',
-    '    }',
-    '    // Bold the amount column',
+    '    if(firstRow===-1) firstRow = nr;',
+    '    if(idx===0) applyRowColor(sh, nr, p.status);',
+    '    else sh.getRange(nr,1,1,headers.length).setBackground("#F9F9F9");',
     '    sh.getRange(nr,14,1,1).setFontWeight("bold");',
     '  });',
-    '  updateDayTotals(sh, rawDate);',
-    '  return jsonOut({status:"ok", row:firstRow, items:items.length});',
+    '  // NO sort, NO day totals — kept clean and fast.',
+    '  // Run rebuildAllDayTotals manually when needed.',
+    '  return jsonOut({status:"ok", row:firstRow, orderId:p.orderId, items:items.length});',
     '}',
     '',
     '// ── SORT SHEET BY DATE THEN REBUILD DAY TOTAL ───────────────────────',
@@ -5276,6 +5272,190 @@ function cacheOrdersForDate(date, orders) {
     else merged.push(o);
   });
   localStorage.setItem(key, JSON.stringify(merged));
+}
+
+// ── GST REPORT EXPORT ────────────────────────────────────────────────
+function openGSTExport() {
+  // Default: first and last day of current month
+  const now = new Date();
+  const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+  const firstDay = y+'-'+m+'-01';
+  const lastDay  = y+'-'+m+'-'+new Date(y, now.getMonth()+1, 0).getDate();
+  document.getElementById('gst-from').value = firstDay;
+  document.getElementById('gst-to').value   = lastDay;
+  previewGSTReport();
+  document.getElementById('modal-gst-export').classList.add('open');
+}
+
+function getAllOrdersInRange(from, to) {
+  const orders = [];
+  const seen = new Set();
+  // Walk all localStorage date keys
+  for(let i=0; i<localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(!key || !key.startsWith(LS_PREFIX)) continue;
+    const date = key.replace(LS_PREFIX,'');
+    if(date < from || date > to) continue;
+    try {
+      const dayOrders = JSON.parse(localStorage.getItem(key)||'[]');
+      dayOrders.forEach(o => {
+        if(!seen.has(o.id)) { seen.add(o.id); orders.push(o); }
+      });
+    } catch(e) {}
+  }
+  // Also include STATE.orders in range
+  STATE.orders.forEach(o => {
+    const d = o.date || TODAY_KEY;
+    if(d >= from && d <= to && !seen.has(o.id)) { seen.add(o.id); orders.push(o); }
+  });
+  return orders.sort((a,b) => (a.date||'').localeCompare(b.date||''));
+}
+
+function previewGSTReport() {
+  const from = document.getElementById('gst-from').value;
+  const to   = document.getElementById('gst-to').value;
+  if(!from || !to) return;
+  const orders = getAllOrdersInRange(from, to).filter(o => o.status !== 'cancelled');
+  const total  = orders.reduce((s,o) => {
+    const itemsSum = (o.items||[]).reduce((si,i)=>si+(parseFloat(i.amount)||0),0);
+    return s + (itemsSum > 0 ? itemsSum : (o.total||0));
+  }, 0);
+  // Product totals
+  const byProduct = {};
+  orders.forEach(o => {
+    (o.items||[]).forEach(item => {
+      const n = item.name||'Unknown';
+      if(!byProduct[n]) byProduct[n] = {qty:0, amt:0};
+      byProduct[n].qty += parseFloat(item.qty)||0;
+      byProduct[n].amt += parseFloat(item.amount)||0;
+    });
+  });
+  const topProducts = Object.entries(byProduct).sort((a,b)=>b[1].amt-a[1].amt).slice(0,6);
+  document.getElementById('gst-preview').innerHTML =
+    `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+        <span style="color:var(--muted);">${orders.length} orders · ${Object.keys(byProduct).length} products</span>
+        <span style="font-weight:700;color:var(--amber);">₹${total.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
+      </div>
+      ${topProducts.map(([name,d])=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-top:1px solid var(--border);font-size:12px;">
+        <span>${name}</span><span style="color:var(--muted);">${d.qty % 1 === 0 ? d.qty : d.qty.toFixed(2)} · ₹${d.amt.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
+      </div>`).join('')}
+    </div>`;
+}
+
+function generateGSTReport(format) {
+  const from = document.getElementById('gst-from').value;
+  const to   = document.getElementById('gst-to').value;
+  if(!from || !to) { showToast('Select date range'); return; }
+
+  const orders = getAllOrdersInRange(from, to).filter(o => o.status !== 'cancelled');
+  if(!orders.length) { showToast('No orders in this range'); return; }
+
+  const biz = STATE.bizName || 'Gaavn Fresh';
+  const GSTIN = STATE.gstin || '';
+  // HSN for dairy products — 0401 (fresh milk/cream), 0406 (cheese/paneer), 2202 (flavoured drinks)
+  const hsnMap = {
+    'Paneer':'0406', 'Malai Paneer':'0406', 'Lite Paneer':'0406',
+    'Lite Curd':'0406', 'Std Khoya':'0406', 'CM Khoya':'0406',
+    'Sweet Lassi':'2202', 'Mango Lassi':'2202', 'Mixed Lassi':'2202',
+    'Chaas 500ml':'2202', 'Chaas 1 Litre':'2202',
+  };
+
+  // ── Build date-wise summary ──────────────────────────────────────────
+  const byDate = {};
+  const byParty = {};
+  const byProduct = {};
+
+  orders.forEach(o => {
+    const d = o.date || TODAY_KEY;
+    if(!byDate[d]) byDate[d] = {orders:0, total:0};
+    byDate[d].orders++;
+    const party = o.customerName || 'Unknown';
+    if(!byParty[party]) byParty[party] = {orders:0, total:0, category: o.customerCategory||''};
+
+    (o.items||[]).forEach(item => {
+      const amt = parseFloat(item.amount)||0;
+      byDate[d].total += amt;
+      byParty[party].total += amt;
+      const pname = item.name||'Unknown';
+      if(!byProduct[pname]) byProduct[pname] = {qty:0, amt:0, unit: item.unit||'', hsn: hsnMap[pname]||'0406'};
+      byProduct[pname].qty += parseFloat(item.qty)||0;
+      byProduct[pname].amt += amt;
+    });
+    byParty[party].orders++;
+  });
+
+  const grandTotal = Object.values(byProduct).reduce((s,p)=>s+p.amt,0);
+
+  // ── Build CSV ────────────────────────────────────────────────────────
+  const rows = [];
+  const q = v => '"'+String(v||'').replace(/"/g,'""')+'"';
+
+  // Header block
+  rows.push([q(biz+' — GST Sales Report')]);
+  rows.push([q('GSTIN: '+GSTIN), '', q('Period: '+from+' to '+to)]);
+  rows.push([q('Generated: '+new Date().toLocaleString('en-IN'))]);
+  rows.push([]);
+
+  // Section 1: Date-wise summary
+  rows.push([q('=== DATE-WISE SALES SUMMARY ===')]);
+  rows.push(['Date','Orders','Total Sales (Rs)'].map(q));
+  Object.entries(byDate).sort().forEach(([d,v])=>{
+    rows.push([q(d), q(v.orders), q(v.total.toFixed(2))]);
+  });
+  rows.push(['','',q('TOTAL'),q(grandTotal.toFixed(2))]);
+  rows.push([]);
+
+  // Section 2: Product-wise totals with HSN (for CA/GST filing)
+  rows.push([q('=== PRODUCT-WISE TOTALS (HSN CODE-WISE) ===')]);
+  rows.push(['HSN Code','Product','Total Qty','Unit','Total Amount (Rs)','GST Rate','Taxable Amt','GST Amt'].map(q));
+  Object.entries(byProduct).sort((a,b)=>b[1].amt-a[1].amt).forEach(([name,p])=>{
+    // All fresh dairy is exempt (0%) under GST in India
+    rows.push([
+      q(p.hsn), q(name),
+      q(p.qty % 1 === 0 ? p.qty : p.qty.toFixed(3)),
+      q(p.unit), q(p.amt.toFixed(2)),
+      q('Exempt (0%)'), q(p.amt.toFixed(2)), q('0.00')
+    ]);
+  });
+  rows.push(['','','','',q('GRAND TOTAL'),'','',q(grandTotal.toFixed(2))].map((v,i)=>i<4?q(''):v));
+  rows.push([]);
+
+  // Section 3: Party-wise sales (for CA reconciliation)
+  rows.push([q('=== PARTY-WISE SALES SUMMARY ===')]);
+  rows.push(['Customer Name','Category','Orders','Total Sales (Rs)'].map(q));
+  Object.entries(byParty).sort((a,b)=>b[1].total-a[1].total).forEach(([name,p])=>{
+    rows.push([q(name), q(p.category), q(p.orders), q(p.total.toFixed(2))]);
+  });
+  rows.push([]);
+
+  // Section 4: Transaction detail (every order, every item)
+  rows.push([q('=== DETAILED TRANSACTIONS ===')]);
+  rows.push(['Date','Order ID','Customer','Category','Area','Status','Product','HSN','Qty','Unit','Rate (Rs)','Amount (Rs)','Order Total (Rs)','Payment Mode'].map(q));
+  orders.forEach(o => {
+    const itemsSum = (o.items||[]).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+    const orderTot = Math.max(itemsSum, o.total||0);
+    (o.items||[]).forEach((item,idx) => {
+      rows.push([
+        q(o.date||TODAY_KEY), q(o.id), q(o.customerName), q(o.customerCategory||''),
+        q(o.customerArea||''), q(o.status),
+        q(item.name||''), q(hsnMap[item.name]||'0406'),
+        q(parseFloat(item.qty)||0), q(item.unit||''),
+        q(parseFloat(item.rate)||0), q(parseFloat(item.amount)||0),
+        idx===0 ? q(orderTot.toFixed(2)) : q(''),
+        idx===0 ? q(o.payment?.mode||'') : q(''),
+      ]);
+    });
+  });
+
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = biz.replace(/\s+/g,'_')+'_GST_Report_'+from+'_to_'+to+'.csv';
+  a.click();
+  closeModal('modal-gst-export');
+  showToast('✓ GST report downloaded');
 }
 
 function renderHistory() {
